@@ -194,29 +194,10 @@ export function Marketplace() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-gradient-to-b from-surface/50 to-surface p-8 pb-32">
-        {/* Header + View Toggle */}
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-on-surface">Compute Marketplace</h2>
-            <p className="mt-1 text-sm text-on-surface-variant">Lease verified GPU compute on BOT Chain. Prices set by AI oracle.</p>
-          </div>
-          {/* Grid / List toggle */}
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-outline-variant/20 bg-surface-container p-1">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'grid' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-              >
-                <Grid3x3 className="h-4 w-4" /> Grid
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-              >
-                <List className="h-4 w-4" /> List
-              </button>
-            </div>
-          </div>
+        {/* Header */}
+        <div className="mb-6">
+          <h2 className="text-base font-semibold text-on-surface">Compute Marketplace</h2>
+          <p className="mt-1 text-sm text-on-surface-variant">Lease verified GPU compute on BOT Chain. Prices set by AI oracle.</p>
         </div>
 
         {/* Filters Bar (inline, above listings) */}
@@ -257,6 +238,24 @@ export function Marketplace() {
             >
               <ShieldCheck className="h-3.5 w-3.5" /> Verified Only
             </button>
+
+            {/* Grid / List toggle — inline with filters */}
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-outline-variant/20 bg-surface-container p-1">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'grid' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  <Grid3x3 className="h-4 w-4" /> Grid
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                >
+                  <List className="h-4 w-4" /> List
+                </button>
+              </div>
+            </div>
 
             <div className="ml-auto font-mono text-xs text-outline">
               {filteredListings.length} of {listings.length} nodes
