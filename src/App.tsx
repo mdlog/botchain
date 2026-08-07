@@ -10,6 +10,7 @@ import { Marketplace } from './components/views/Marketplace';
 import { FinancialLayer } from './components/views/FinancialLayer';
 import { NodeManagement } from './components/views/NodeManagement';
 import { ComputeSession } from './components/views/ComputeSession';
+import { Docs } from './components/views/Docs';
 import { WalletProvider } from './context/WalletContext';
 
 export default function App() {
@@ -27,6 +28,8 @@ export default function App() {
         return <FinancialLayer />;
       case 'node':
         return <NodeManagement />;
+      case 'docs':
+        return <Docs />;
       case 'settings':
         return <div className="p-8 text-on-surface">Settings view coming soon...</div>;
       default:

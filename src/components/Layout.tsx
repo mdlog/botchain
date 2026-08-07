@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, ShoppingCart, Wallet, Sliders, Settings, Search, Terminal } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, Wallet, Sliders, Settings, Search, Terminal, BookOpen } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { WalletConnect } from './WalletConnect';
 import { useWalletContext } from '@/context/WalletContext';
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { id: 'compute', label: 'Compute Session', icon: Terminal },
   { id: 'financial', label: 'Financial Layer', icon: Wallet },
   { id: 'node', label: 'Node Management', icon: Sliders },
+  { id: 'docs', label: 'Docs', icon: BookOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
