@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Terminal, Play, Square, Code2, Cpu, Clock, CheckCircle, AlertCircle, Loader, ChevronDown, Zap, Timer, PlusCircle, Hourglass } from 'lucide-react';
+import { Terminal, Play, Square, Code2, Cpu, Clock, CheckCircle, AlertCircle, Loader, ChevronDown, Zap, Timer, PlusCircle, Hourglass, Trash2 } from 'lucide-react';
 import { useComputeSession, type ExecutionResult } from '@/hooks/useComputeSession';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
@@ -455,11 +455,22 @@ export function ComputeSession() {
                     <Terminal className="h-4 w-4 text-on-surface-variant" />
                     <span className="font-mono text-xs font-semibold text-on-surface">Output</span>
                   </div>
-                  {results.length > 0 && (
-                    <span className="font-mono text-[10px] text-outline">
-                      {results.length} execution{results.length > 1 ? 's' : ''}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {results.length > 0 && (
+                      <span className="font-mono text-[10px] text-outline">
+                        {results.length} execution{results.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {results.length > 0 && (
+                      <button
+                        onClick={() => setResults([])}
+                        title="Clear output"
+                        className="flex items-center gap-1 rounded bg-surface-container-highest px-2 py-1 font-mono text-[10px] font-semibold text-outline transition-colors hover:text-compute-down"
+                      >
+                        <Trash2 className="h-3 w-3" /> CLEAR
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 min-h-[400px]">
                   {results.length === 0 ? (
