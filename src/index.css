@@ -46,6 +46,10 @@
     font-family: var(--font-sans);
   }
 
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
   ::-webkit-scrollbar {
     display: none;
   }
