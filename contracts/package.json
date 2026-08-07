@@ -1,0 +1,21 @@
+{
+  "name": "computerwa-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network botchain-testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network botchain-mainnet",
+    "verify": "hardhat verify --network botchain-mainnet",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0",
+    "typescript": "^5.8.0",
+    "@types/node": "^22.14.0"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  }
+}

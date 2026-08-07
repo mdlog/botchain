@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "./dist",
+    "noEmit": false,
+    "strict": true,
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["./scripts", "./hardhat.config.ts"],
+  "compilerOptions.types": ["node"]
+}

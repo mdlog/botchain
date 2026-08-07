@@ -1,0 +1,10 @@
+{
+  "network": "968",
+  "contracts": {
+    "ComputeRegistry": "0x91778B39490e6193c27A32a35dd33b7B14F54EC0",
+    "PriceOracle": "0x95D102579C544BA2756F344eC2Ad09D677CFAe49",
+    "ComputeMarketplace": "0xd93C4006888d5A707b9e072685d6aD36a91228d2",
+    "ComputeIndexToken": "0xE61DD019294Ab52eF69714a948E65b9a31947c1e"
+  },
+  "deployedAt": "2026-08-07T00:37:00.000Z"
+}
