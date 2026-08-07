@@ -16,6 +16,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createPublicClient, createWalletClient, http, formatEther } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { spawn } from 'child_process';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
@@ -30,8 +31,8 @@ const PROVIDER_KEY = process.env.PROVIDER_PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://rpc.bohr.life';
 const CHAIN_ID = Number(process.env.CHAIN_ID || 968);
 
-const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0x91778B39490e6193c27A32a35dd33b7B14F54EC0';
-const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0xd93C4006888d5A707b9e072685d6aD36a91228d2';
+const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0xc612111b8648B73ED23CF19f400488566af76Ddc';
+const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0x7278045051843BbdD7786B493de0681904075f02';
 
 // Chain config
 const chain = {
@@ -132,13 +133,13 @@ const publicClient = createPublicClient({ chain, transport: http(RPC_URL) });
 let walletClient = null;
 let providerAddress = null;
 if (PROVIDER_KEY) {
+  const account = privateKeyToAccount(PROVIDER_KEY.startsWith('0x') ? PROVIDER_KEY : `0x${PROVIDER_KEY}`);
   walletClient = createWalletClient({
     chain,
     transport: http(RPC_URL),
-    account: PROVIDER_KEY,
+    account,
   });
-  // Derive address from key (viem does this internally)
-  providerAddress = walletClient.account.address;
+  providerAddress = account.address;
 }
 
 // ── Job Storage ────────────────────────────────────────
