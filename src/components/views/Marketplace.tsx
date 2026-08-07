@@ -239,8 +239,8 @@ export function Marketplace() {
               <ShieldCheck className="h-3.5 w-3.5" /> Verified Only
             </button>
 
-            {/* Grid / List toggle — inline with filters */}
-            <div className="flex items-center gap-2">
+            {/* Grid / List toggle — right aligned */}
+            <div className="ml-auto flex items-center gap-2">
               <div className="flex rounded-lg border border-outline-variant/20 bg-surface-container p-1">
                 <button
                   onClick={() => setViewMode('grid')}
@@ -255,10 +255,6 @@ export function Marketplace() {
                   <List className="h-4 w-4" /> List
                 </button>
               </div>
-            </div>
-
-            <div className="ml-auto font-mono text-xs text-outline">
-              {filteredListings.length} of {listings.length} nodes
             </div>
           </div>
 
