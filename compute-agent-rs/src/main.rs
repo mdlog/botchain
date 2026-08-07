@@ -11,8 +11,8 @@
 //   GET  /info            — provider node info
 //   GET  /jobs            — list provider's jobs
 //   POST /execute         — execute code (consumer → agent)
-//   POST /jobs/:id/accept — accept a pending job
-//   POST /jobs/:id/complete — complete an active job
+//   POST /jobs/{id}/accept — accept a pending job
+//   POST /jobs/{id}/complete — complete an active job
 
 mod chain;
 mod sandbox;
@@ -20,8 +20,10 @@ mod monitor;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, Request},
+    middleware::{self, Next},
     response::Json,
+    response::Response,
     routing::{get, post},
     Router,
 };
@@ -29,12 +31,41 @@ use chain::ChainClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Instant;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{info, error};
+use tracing::{info, warn, error};
 
 #[derive(Clone)]
 struct AppState {
     client: Arc<ChainClient>,
+}
+
+// ── Request logging middleware ──────────────────────────
+
+async fn request_logger(req: Request<axum::body::Body>, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let start = Instant::now();
+
+    let response = next.run(req).await;
+
+    let elapsed = start.elapsed();
+    let status = response.status();
+
+    if path == "/health" {
+        // Skip logging health checks (too noisy)
+        return response;
+    }
+
+    info!(
+        "→ {} {} → {} ({:.0}ms)",
+        method,
+        path,
+        status,
+        elapsed.as_millis()
+    );
+
+    response
 }
 
 #[derive(Serialize)]
@@ -115,6 +146,8 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Value>, (Status
     let pending = jobs.iter().filter(|j| j.status == 0).count();
     let completed = jobs.iter().filter(|j| j.status == 2).count();
 
+    info!("📋 Jobs requested: {} total (pending={}, active={}, completed={})", total, pending, active, completed);
+
     Ok(Json(json!({
         "total": total,
         "active": active,
@@ -128,44 +161,87 @@ async fn execute_code(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    let code_preview: String = req.code.chars().take(80).collect();
+    let code_lines = req.code.lines().count();
+
+    info!(
+        "🔧 EXECUTE REQUEST | lang={} lines={} timeout={}s job={}",
+        req.language,
+        code_lines,
+        req.timeout_secs.unwrap_or(300),
+        req.job_id.map(|j| format!("#{}", j)).unwrap_or_else(|| "standalone".to_string())
+    );
+    info!("📝 Code preview: {}{}", code_preview, if req.code.len() > 80 { "..." } else { "" });
+
     // Verify job is active if job_id provided
     if let Some(job_id) = req.job_id {
         let job = state.client.get_job(job_id).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if job.status != 1 {
+            warn!("❌ Job #{} not active (status={})", job_id, job.status);
             return Err((StatusCode::FORBIDDEN, format!("Job {} is not active (status={})", job_id, job.status)));
         }
 
         let addr = state.client.address();
         if !job.provider.eq_ignore_ascii_case(&addr.to_string()) {
+            warn!("❌ Job #{} doesn't belong to this provider", job_id);
             return Err((StatusCode::FORBIDDEN, "Job does not belong to this provider".to_string()));
         }
+
+        info!("✅ Job #{} verified active, provider match", job_id);
     }
 
     if !sandbox::check_runtime(&req.language) {
+        warn!("❌ Runtime {} not available", req.language);
         return Err((StatusCode::BAD_REQUEST, format!("{} runtime not available", req.language)));
     }
 
     let config = sandbox::ExecutionConfig {
-        language: req.language,
+        language: req.language.clone(),
         code: req.code,
         timeout_secs: req.timeout_secs.unwrap_or(300),
         ..Default::default()
     };
 
+    info!("🚀 Executing {} code (timeout={}s)...", req.language, config.timeout_secs);
+    let exec_start = Instant::now();
+
     match sandbox::execute(&config).await {
-        Ok(result) => Ok(Json(json!({
-            "status": if result.exit_code == 0 { "completed" } else { "failed" },
-            "exit_code": result.exit_code,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "duration_ms": result.duration_ms,
-            "timed_out": result.timed_out,
-            "agent": "rust",
-        }))),
+        Ok(result) => {
+            let total_ms = exec_start.elapsed().as_millis();
+            let status_str = if result.exit_code == 0 { "✅ COMPLETED" } else { "⚠️ FAILED" };
+
+            info!(
+                "{} Execution done | exit={} duration={}ms (total {}ms) timed_out={}",
+                status_str,
+                result.exit_code,
+                result.duration_ms,
+                total_ms,
+                result.timed_out
+            );
+
+            if !result.stdout.is_empty() {
+                let preview: String = result.stdout.chars().take(200).collect();
+                info!("📤 stdout: {}{}", preview, if result.stdout.len() > 200 { "..." } else { "" });
+            }
+            if !result.stderr.is_empty() {
+                let preview: String = result.stderr.chars().take(200).collect();
+                warn!("⚠️ stderr: {}{}", preview, if result.stderr.len() > 200 { "..." } else { "" });
+            }
+
+            Ok(Json(json!({
+                "status": if result.exit_code == 0 { "completed" } else { "failed" },
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "duration_ms": result.duration_ms,
+                "timed_out": result.timed_out,
+                "agent": "rust",
+            })))
+        }
         Err(e) => {
-            error!("Execution failed: {}", e);
+            error!("❌ Execution failed: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -175,8 +251,15 @@ async fn accept_job(
     State(state): State<AppState>,
     Path(job_id): Path<u64>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    info!("📲 Accept request for job #{}", job_id);
+
     state.client.accept_job(job_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            warn!("❌ Accept job #{} failed: {}", job_id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+
+    info!("✅ Job #{} accepted on-chain", job_id);
 
     Ok(Json(json!({
         "status": "accepted",
@@ -188,8 +271,15 @@ async fn complete_job(
     State(state): State<AppState>,
     Path(job_id): Path<u64>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    info!("🏁 Complete request for job #{}", job_id);
+
     state.client.complete_job(job_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            warn!("❌ Complete job #{} failed: {}", job_id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+
+    info!("✅ Job #{} completed on-chain", job_id);
 
     Ok(Json(json!({
         "status": "completed",
@@ -208,6 +298,8 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,computerwa_agent=debug".into()),
         )
+        // Compact format for cleaner CLI output
+        .compact()
         .init();
 
     let port: u16 = std::env::var("AGENT_PORT")
@@ -217,11 +309,11 @@ async fn main() -> anyhow::Result<()> {
 
     let client = match ChainClient::from_env().await {
         Ok(c) => {
-            info!("Connected to BOT Chain, provider: {}", c.address());
+            info!("🔗 Connected to BOT Chain | provider: {}", c.address());
             Arc::new(c)
         }
         Err(e) => {
-            error!("Failed to init chain client: {}", e);
+            error!("❌ Failed to init chain client: {}", e);
             return Err(e);
         }
     };
@@ -239,25 +331,31 @@ async fn main() -> anyhow::Result<()> {
         .await;
     });
 
+    // Consume monitor events
     tokio::spawn(async move {
         while let Some(event) = monitor_rx.recv().await {
             match event {
                 monitor::MonitorEvent::NewPendingJob(job) => {
-                    info!("📡 New pending job #{} (type={}, node={})", job.job_id, job.job_type, job.node_id);
+                    info!(
+                        "🔔 NEW JOB #{} | node={} type={} consumer={} price={} DGRAM/hr",
+                        job.job_id, job.node_id, job.job_type, job.consumer,
+                        wei_to_dgram(&job.price_per_hour_wei)
+                    );
                 }
                 monitor::MonitorEvent::JobAccepted(job) => {
-                    info!("✅ Job #{} accepted", job.job_id);
+                    info!("✅ Job #{} ACCEPTED on-chain", job.job_id);
                 }
                 monitor::MonitorEvent::JobCompleted(job) => {
-                    info!("🏁 Job #{} completed", job.job_id);
+                    info!("🏁 Job #{} COMPLETED on-chain", job.job_id);
                 }
                 monitor::MonitorEvent::JobExpired(job) => {
-                    info!("⏰ Job #{} expired (auto-completed)", job.job_id);
+                    info!("⏰ Job #{} EXPIRED + auto-completed", job.job_id);
                 }
             }
         }
     });
 
+    // Heartbeat
     let hb_client = client.clone();
     tokio::spawn(async move {
         monitor::run_heartbeat(hb_client).await;
@@ -270,17 +368,37 @@ async fn main() -> anyhow::Result<()> {
         .route("/info", get(info))
         .route("/jobs", get(list_jobs))
         .route("/execute", post(execute_code))
-        .route("/jobs/:id/accept", post(accept_job))
-        .route("/jobs/:id/complete", post(complete_job))
+        .route("/jobs/{id}/accept", post(accept_job))
+        .route("/jobs/{id}/complete", post(complete_job))
+        .layer(middleware::from_fn(request_logger))
         .layer(CorsLayer::very_permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
-    info!("🦀 ComputeRWA Rust Agent v2.0.0 listening on {}", addr);
+    info!("╔══════════════════════════════════════════════════╗");
+    info!("║ 🦀 ComputeRWA Rust Agent v2.0.0                 ║");
+    info!("║    axum + alloy + tokio                          ║");
+    info!("║    Listening on {}                        ║", addr);
+    info!("╚══════════════════════════════════════════════════╝");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Convert wei string to human-readable DGRAM (6 decimals)
+fn wei_to_dgram(wei_str: &str) -> String {
+    if let Ok(wei) = wei_str.parse::<u128>() {
+        let whole = wei / 1_000_000;
+        let frac = wei % 1_000_000;
+        if frac == 0 {
+            format!("{}", whole)
+        } else {
+            format!("{}.{:06}", whole, frac)
+        }
+    } else {
+        wei_str.to_string()
+    }
 }
