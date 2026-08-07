@@ -3,7 +3,6 @@ import { LayoutDashboard, ShoppingCart, Wallet, Sliders, Settings, Search, Termi
 import { cn } from '../lib/utils';
 import { WalletConnect } from './WalletConnect';
 import { useWalletContext } from '@/context/WalletContext';
-import { formatBOT } from '../lib/format';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -21,7 +20,7 @@ const NAV_ITEMS = [
 ];
 
 export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
-  const { address, balance, hasEthereum } = useWalletContext();
+  const { hasEthereum } = useWalletContext();
 
   return (
     <div className="flex min-h-screen bg-background font-sans text-on-background">
@@ -74,15 +73,6 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
           </div>
 
                   <div className="flex items-center gap-6">
-            {address ? (
-              <div className="flex gap-4">
-                <div className="flex flex-col items-end">
-                  <span className="font-mono text-xs font-semibold text-outline">BALANCE</span>
-                  <span className="font-mono text-sm font-medium text-primary">{formatBOT(balance)}</span>
-                </div>
-              </div>
-            ) : null}
-
             <WalletConnect />
           </div>
         </header>
