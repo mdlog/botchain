@@ -27,7 +27,7 @@ interface NodeListing {
   confidence: number;
 }
 
-const GPU_MODELS = ['NVIDIA H100', 'NVIDIA A100', 'NVIDIA RTX 4090', 'NVIDIA RTX 3090', 'NVIDIA RTX 3060', 'CPU Only'];
+const GPU_MODELS = ['NVIDIA H100', 'NVIDIA A100', 'NVIDIA RTX 4090', 'NVIDIA RTX 3090', 'NVIDIA RTX 3060', 'AMD Radeon GPU', 'CPU Only'];
 
 export function Marketplace() {
   const { address } = useWalletContext();
