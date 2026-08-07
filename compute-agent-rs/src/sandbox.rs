@@ -80,14 +80,26 @@ pub async fn execute(config: &ExecutionConfig) -> Result<ExecutionResult> {
 
     let start = std::time::Instant::now();
 
-    // Build command with resource limits
-    // Using `timeout` for wall-clock, `ulimit` for memory via shell wrapper
-    let shell_cmd = format!(
-        "ulimit -v {} 2>/dev/null; {} {}",
-        config.memory_limit_mb * 1024,  // virtual memory in KB
-        interpreter,
-        code_file.to_string_lossy()
-    );
+    // Build command with resource limits.
+    // Python3: use ulimit -v to cap virtual memory.
+    // Node.js: skip ulimit -v (V8 needs large virtual address space for JIT),
+    //          use V8's --max-old-space-size flag to limit heap instead.
+    let shell_cmd: String;
+    if interpreter == "node" {
+        let heap_mb = (config.memory_limit_mb as f64 * 0.75) as u64;
+        shell_cmd = format!(
+            "node --max-old-space-size={} {}",
+            heap_mb,
+            code_file.to_string_lossy()
+        );
+    } else {
+        shell_cmd = format!(
+            "ulimit -v {} 2>/dev/null; {} {}",
+            config.memory_limit_mb * 1024,
+            interpreter,
+            code_file.to_string_lossy()
+        );
+    }
 
     let mut cmd = if config.timeout_secs > 0 {
         let mut c = Command::new("timeout");
