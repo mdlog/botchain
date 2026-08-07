@@ -31,7 +31,7 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
           <div className="flex h-8 w-8 items-center justify-center rounded bg-primary/20 text-primary">
             <span className="font-mono font-bold text-[10px]">BOT</span>
           </div>
-          <span className="text-xl font-semibold tracking-tight text-primary">BOT CHAIN</span>
+          <span className="text-lg font-semibold tracking-tight text-primary">BOT CHAIN</span>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-4">
@@ -47,7 +47,7 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
               )}
             >
               <item.icon className="mr-4 h-5 w-5" />
-              <span className="text-base">{item.label}</span>
+              <span className="text-sm">{item.label}</span>
             </button>
           ))}
         </nav>

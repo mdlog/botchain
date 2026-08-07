@@ -197,7 +197,7 @@ export function Marketplace() {
         {/* Header + View Toggle */}
         <div className="mb-6 flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-semibold text-on-surface">Compute Marketplace</h2>
+            <h2 className="text-xl font-semibold text-on-surface">Compute Marketplace</h2>
             <p className="mt-1 text-sm text-on-surface-variant">Lease verified GPU compute on BOT Chain. Prices set by AI oracle.</p>
           </div>
           {/* Grid / List toggle */}
@@ -290,7 +290,7 @@ export function Marketplace() {
         {filteredListings.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-xl font-semibold text-on-surface">No Compute Nodes Found</h2>
+            <h2 className="mb-2 text-lg font-semibold text-on-surface">No Compute Nodes Found</h2>
             <p className="text-sm text-on-surface-variant">
               {listings.length === 0
                 ? 'Nodes will appear here once providers register them. Go to Node Management to register.'
@@ -303,7 +303,7 @@ export function Marketplace() {
             {filteredListings.map((node, idx) => (
               <div key={idx} className="group rounded-lg border border-surface-glass bg-surface-container-low p-5 transition-all hover:-translate-y-1 hover:border-outline-variant/50 hover:shadow-lg">
                 <div className="mb-3 flex items-start justify-between">
-                  <div className="font-mono text-base text-on-surface">{node.model}</div>
+                  <div className="font-mono text-sm text-on-surface">{node.model}</div>
                   <div className="flex items-center gap-1">
                     {node.verified && <ShieldCheck className="h-3.5 w-3.5 text-compute-active" />}
                     <div className="flex items-center gap-1 rounded bg-surface-container-high px-2 py-0.5 font-mono text-[10px] font-semibold text-outline">
@@ -456,7 +456,7 @@ export function Marketplace() {
       {showLeaseForm && address && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowLeaseForm(null)}>
           <div className="w-full max-w-md rounded-2xl bg-surface-container-low p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="mb-4 text-xl font-semibold text-on-surface">Lease Compute</h3>
+            <h3 className="mb-3 text-lg font-semibold text-on-surface">Lease Compute</h3>
             <div className="mb-4">
               <div className="mb-2 text-sm text-on-surface-variant">{showLeaseForm.model} · Node #{showLeaseForm.nodeId.toString()}</div>
               <div className="mb-3 font-mono text-lg text-primary">{formatBOT(showLeaseForm.pricePerHour)} DGRAM/hr</div>

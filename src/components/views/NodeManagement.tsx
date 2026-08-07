@@ -347,7 +347,7 @@ export function NodeManagement() {
       {/* Register Form */}
       {showRegister && address && (
         <div className="rounded-2xl bg-surface-container-low p-6 border border-primary/20">
-          <h3 className="mb-4 text-xl font-semibold text-on-surface">Register Compute Node</h3>
+          <h3 className="mb-3 text-lg font-semibold text-on-surface">Register Compute Node</h3>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">GPU Model</label>
@@ -458,13 +458,13 @@ export function NodeManagement() {
       {!address ? (
         <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
           <Cpu className="mb-4 h-12 w-12 text-outline" />
-          <h2 className="mb-2 text-xl font-semibold text-on-surface">Connect Wallet to Manage Nodes</h2>
+          <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet to Manage Nodes</h2>
           <p className="text-sm text-on-surface-variant">Connect your wallet to register and manage compute nodes.</p>
         </div>
       ) : nodes.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
           <PlusCircle className="mb-4 h-12 w-12 text-outline" />
-          <h2 className="mb-2 text-xl font-semibold text-on-surface">No Nodes Registered</h2>
+          <h2 className="mb-2 text-lg font-semibold text-on-surface">No Nodes Registered</h2>
           <p className="text-sm text-on-surface-variant">Click "Register New Node" to add your first compute node on-chain.</p>
         </div>
       ) : (
@@ -473,7 +473,7 @@ export function NodeManagement() {
           <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
             <div className="flex flex-col gap-4 rounded-2xl bg-surface-container-low p-6 lg:col-span-8">
               <div className="flex items-center justify-between">
-                <h2 className="flex items-center gap-3 text-2xl font-semibold text-on-surface">
+                <h2 className="flex items-center gap-3 text-xl font-semibold text-on-surface">
                   <Activity className="h-6 w-6 text-primary" />
                   Fleet Overview
                 </h2>
@@ -485,15 +485,15 @@ export function NodeManagement() {
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-2xl text-on-surface">{nodes.filter(n => n.status === 1).length}</div>
+                  <div className="font-mono text-lg text-on-surface">{nodes.filter(n => n.status === 1).length}</div>
                   <div className="font-mono text-[10px] uppercase text-outline">Active</div>
                 </div>
                 <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-2xl text-on-surface">{nodes.filter(n => n.verified).length}</div>
+                  <div className="font-mono text-lg text-on-surface">{nodes.filter(n => n.verified).length}</div>
                   <div className="font-mono text-[10px] uppercase text-outline">Verified</div>
                 </div>
                 <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-2xl text-on-surface">{formatBOTCompact(nodes.reduce((s, n) => s + n.totalRevenue, 0n))}</div>
+                  <div className="font-mono text-lg text-on-surface">{formatBOTCompact(nodes.reduce((s, n) => s + n.totalRevenue, 0n))}</div>
                   <div className="font-mono text-[10px] uppercase text-outline">Total Revenue (DGRAM)</div>
                 </div>
               </div>
@@ -527,7 +527,7 @@ export function NodeManagement() {
                     <Cpu className="h-5 w-5 text-on-surface-variant transition-colors group-hover:text-primary" />
                   </div>
                   <div>
-                    <div className="font-mono text-base text-on-surface">NODE #{node.nodeId.toString()}</div>
+                    <div className="font-mono text-sm text-on-surface">NODE #{node.nodeId.toString()}</div>
                     <div className="font-mono text-xs text-outline">{node.model}</div>
                   </div>
                 </div>
@@ -578,7 +578,7 @@ export function NodeManagement() {
           {/* Job Management Section */}
           <div className="mt-8">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="flex items-center gap-3 text-2xl font-semibold text-on-surface">
+              <h2 className="flex items-center gap-3 text-xl font-semibold text-on-surface">
                 <Briefcase className="h-6 w-6 text-primary" />
                 Job Queue
               </h2>

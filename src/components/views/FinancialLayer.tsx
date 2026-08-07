@@ -157,7 +157,7 @@ export function FinancialLayer() {
         {!address ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-xl font-semibold text-on-surface">Connect Wallet to View Financial Layer</h2>
+            <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet to View Financial Layer</h2>
             <p className="text-sm text-on-surface-variant">Connect your wallet to manage CIF tokens and deposits.</p>
           </div>
         ) : (
@@ -215,7 +215,7 @@ export function FinancialLayer() {
             {/* Deposit Form */}
             {showDeposit && (
               <div className="rounded-2xl bg-surface-container-low p-6 border border-primary/20">
-                <h3 className="mb-4 text-xl font-semibold text-on-surface">Deposit Revenue → Mint CIF</h3>
+                <h3 className="mb-3 text-lg font-semibold text-on-surface">Deposit Revenue → Mint CIF</h3>
                 {nodes.filter(n => n.verified).length === 0 ? (
                   <p className="text-sm text-on-surface-variant">
                     No verified nodes found. Register and verify a node in Node Management first.
@@ -257,8 +257,8 @@ export function FinancialLayer() {
                 <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md md:p-8">
                   <div className="mb-8 flex items-center justify-between">
                     <div>
-                      <h2 className="text-2xl font-semibold text-on-surface">Your CIF Deposits</h2>
-                      <p className="mt-1 text-base text-on-surface-variant">Revenue-backed tokenized positions.</p>
+                      <h2 className="text-xl font-semibold text-on-surface">Your CIF Deposits</h2>
+                      <p className="mt-1 text-sm text-on-surface-variant">Revenue-backed tokenized positions.</p>
                     </div>
                   </div>
 
@@ -277,7 +277,7 @@ export function FinancialLayer() {
                                 <Cpu className="h-5 w-5" />
                               </div>
                               <div>
-                                <div className="font-mono text-base text-on-surface">Node #{dep.nodeId?.toString() || dep[0]?.toString()}</div>
+                                <div className="font-mono text-sm text-on-surface">Node #{dep.nodeId?.toString() || dep[0]?.toString()}</div>
                                 <div className="text-xs text-on-surface-variant">
                                   Deposited: {formatBOT(dep.amountWei || dep[1])} DGRAM
                                 </div>
@@ -297,7 +297,7 @@ export function FinancialLayer() {
                 {/* Withdraw Section */}
                 {cifBalance > 0n && (
                   <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md md:p-8">
-                    <h2 className="mb-4 text-2xl font-semibold text-on-surface">Withdraw (Burn CIF → DGRAM)</h2>
+                    <h2 className="mb-3 text-lg font-semibold text-on-surface">Withdraw (Burn CIF → DGRAM)</h2>
                     <p className="mb-4 text-sm text-on-surface-variant">Burn CIF tokens to withdraw DGRAM. 0.5% withdrawal fee applies.</p>
                     <div className="flex flex-col gap-3 md:flex-row">
                       <input
@@ -326,7 +326,7 @@ export function FinancialLayer() {
               <div className="flex flex-col gap-6 xl:col-span-4">
                 {/* How It Works */}
                 <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md">
-                  <h2 className="mb-4 text-2xl font-semibold text-on-surface">How CIF Works</h2>
+                  <h2 className="mb-3 text-lg font-semibold text-on-surface">How CIF Works</h2>
                   <div className="space-y-4">
                     <div className="flex gap-3">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">1</div>

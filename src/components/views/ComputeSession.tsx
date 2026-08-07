@@ -205,7 +205,7 @@ export function ComputeSession() {
     return (
       <div className="flex h-full flex-col items-center justify-center pt-20">
         <Cpu className="mb-4 h-12 w-12 text-outline" />
-        <h2 className="mb-2 text-xl font-semibold text-on-surface">Connect Wallet</h2>
+        <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet</h2>
         <p className="text-sm text-on-surface-variant">Connect your wallet to access compute sessions.</p>
       </div>
     );
@@ -276,7 +276,7 @@ export function ComputeSession() {
         {jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Terminal className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-xl font-semibold text-on-surface">No Compute Jobs Found</h2>
+            <h2 className="mb-2 text-lg font-semibold text-on-surface">No Compute Jobs Found</h2>
             <p className="text-sm text-on-surface-variant">Lease compute on the Marketplace first, then come back here to run your workloads.</p>
           </div>
         ) : (

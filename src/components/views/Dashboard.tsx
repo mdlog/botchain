@@ -112,7 +112,7 @@ export function Dashboard() {
       <div className="relative z-10 mb-12 mt-8 flex items-end justify-between">
         <div>
           <h1 className="mb-2 text-[48px] font-bold leading-[1.1] tracking-tight text-on-background">Provider Command</h1>
-          <p className="max-w-2xl text-base text-on-surface-variant">
+          <p className="max-w-2xl text-sm text-on-surface-variant">
             Real-time on-chain telemetry for compute nodes on BOT Chain DePIN network.
           </p>
         </div>
@@ -129,7 +129,7 @@ export function Dashboard() {
       {!address ? (
         <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
           <CpuIcon className="mb-4 h-12 w-12 text-outline" />
-          <h2 className="mb-2 text-xl font-semibold text-on-surface">Connect Wallet to View Dashboard</h2>
+          <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet to View Dashboard</h2>
           <p className="text-sm text-on-surface-variant">Connect your wallet to see your compute nodes and earnings.</p>
         </div>
       ) : (
@@ -155,7 +155,7 @@ export function Dashboard() {
                 </div>
                 <div className="text-right">
                   <span className="mb-1 block font-mono text-xs font-semibold uppercase tracking-wider text-outline">Network Volume</span>
-                  <span className="block font-mono text-2xl text-on-surface">{formatBOTCompact(totalVolume)} <span className="text-sm text-outline">DGRAM</span></span>
+                  <span className="block font-mono text-lg text-on-surface">{formatBOTCompact(totalVolume)} <span className="text-sm text-outline">DGRAM</span></span>
                 </div>
               </div>
 
@@ -181,7 +181,7 @@ export function Dashboard() {
               <div className="flex items-center justify-between border-b border-outline-variant/10 bg-surface-container-high/50 p-6">
                 <div className="flex items-center gap-3">
                   <Cpu className="h-6 w-6 text-outline" />
-                  <h2 className="text-2xl font-semibold text-on-surface">Your Compute Nodes</h2>
+                  <h2 className="text-xl font-semibold text-on-surface">Your Compute Nodes</h2>
                 </div>
                 <span className="flex items-center gap-2 rounded-full bg-compute-active/10 px-3 py-1 font-mono text-xs font-semibold text-compute-active">
                   <span className="h-2 w-2 animate-pulse rounded-full bg-compute-active"></span>
@@ -213,7 +213,7 @@ export function Dashboard() {
                                 {statusLabels[node.status]}
                               </span>
                             </div>
-                            <p className="text-base text-on-surface">{node.model}</p>
+                            <p className="text-sm text-on-surface">{node.model}</p>
                             <div className="mt-1 flex items-center gap-3 text-xs text-outline">
                               <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {node.region}</span>
                               <span>{node.vramGB} GB VRAM</span>
@@ -259,7 +259,7 @@ export function Dashboard() {
                     <ShieldCheck className="h-5 w-5 text-primary" />
                     <span className="font-mono text-xs font-semibold uppercase text-on-surface-variant">CIF Token Supply</span>
                   </div>
-                  <span className="font-mono text-xl text-primary">{formatBOTCompact(cifSupply)}</span>
+                  <span className="font-mono text-sm text-primary">{formatBOTCompact(cifSupply)}</span>
                 </div>
                 <p className="mt-2 text-[13px] leading-relaxed text-outline">
                   Total CIF tokens minted against compute revenue. Backed 1:1 by DGRAM deposits from verified GPU providers.
