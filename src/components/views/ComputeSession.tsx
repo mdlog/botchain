@@ -205,7 +205,7 @@ export function ComputeSession() {
     return (
       <div className="flex h-full flex-col items-center justify-center pt-20">
         <Cpu className="mb-4 h-12 w-12 text-outline" />
-        <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet</h2>
+        <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet</h2>
         <p className="text-sm text-on-surface-variant">Connect your wallet to access compute sessions.</p>
       </div>
     );
@@ -276,7 +276,7 @@ export function ComputeSession() {
         {jobs.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Terminal className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-lg font-semibold text-on-surface">No Compute Jobs Found</h2>
+            <h2 className="mb-2 text-sm font-semibold text-on-surface">No Compute Jobs Found</h2>
             <p className="text-sm text-on-surface-variant">Lease compute on the Marketplace first, then come back here to run your workloads.</p>
           </div>
         ) : (
@@ -347,7 +347,7 @@ export function ComputeSession() {
                             </button>
                           )}
                         </div>
-                        <div className={`font-mono text-lg font-bold ${urgencyColor} ${countdown.urgency === 'critical' ? 'animate-pulse' : ''}`}>
+                        <div className={`font-mono text-sm font-bold ${urgencyColor} ${countdown.urgency === 'critical' ? 'animate-pulse' : ''}`}>
                           {countdown.expired ? '00:00:00' : formatCountdown(countdown.remaining)}
                         </div>
                         {/* Mini progress bar */}
@@ -508,7 +508,7 @@ export function ComputeSession() {
             </div>
 
             {/* Execution Guide */}
-            <div className="mt-6 rounded-xl border border-outline-variant/10 bg-surface-container-low p-6">
+            <div className="mt-6 rounded-xl border border-outline-variant/10 bg-surface-container-low p-4">
               <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-on-surface">
                 <Cpu className="h-4 w-4 text-primary" /> How Compute Sessions Work
               </h3>
@@ -542,13 +542,13 @@ export function ComputeSession() {
       {/* ── EXTEND LEASE MODAL ── */}
       {showExtendModal && selectedJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowExtendModal(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-surface-container-low p-6" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-2xl bg-surface-container-low p-4" onClick={e => e.stopPropagation()}>
             <div className="mb-4 flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
                 <PlusCircle className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-on-surface">Extend Lease</h3>
+                <h3 className="text-sm font-semibold text-on-surface">Extend Lease</h3>
                 <p className="text-xs text-on-surface-variant">Add more compute time to Job #{selectedJob.jobId.toString()}</p>
               </div>
             </div>
@@ -587,7 +587,7 @@ export function ComputeSession() {
             <div className="mb-4 rounded-lg bg-surface-container p-4">
               <div className="flex justify-between text-sm">
                 <span className="text-on-surface-variant">Additional Cost</span>
-                <span className="font-mono text-lg text-primary">
+                <span className="font-mono text-sm text-primary">
                   {formatBOT(selectedJob.pricePerHourWei * BigInt(extendHours))} DGRAM</span>
               </div>
               <div className="mt-1 flex justify-between font-mono text-[10px] text-outline">

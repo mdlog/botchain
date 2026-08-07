@@ -136,17 +136,17 @@ export function FinancialLayer() {
     <div className="relative flex w-full flex-col">
       <div className="relative z-10 space-y-6 p-4 md:p-8 lg:space-y-12">
         {/* Header */}
-        <header className="flex flex-col items-start justify-between gap-6 border-b border-outline-variant/10 pb-6 md:flex-row md:items-end">
+        <header className="flex flex-col items-start justify-between gap-4 border-b border-outline-variant/10 pb-6 md:flex-row md:items-end">
           <div>
-            <h1 className="text-[48px] font-bold leading-[1.1] tracking-tight text-on-background">Financial Layer</h1>
-            <p className="mt-2 max-w-2xl text-lg text-on-surface-variant">
+            <h1 className="text-base font-bold leading-tight tracking-tight text-on-background">Financial Layer</h1>
+            <p className="mt-1 max-w-2xl text-xs text-on-surface-variant">
               Deposit compute revenue to mint CIF tokens — fractional ownership of real-world GPU assets on BOT Chain.
             </p>
           </div>
           {address && (
             <button
               onClick={() => setShowDeposit(!showDeposit)}
-              className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-mono text-[12px] font-semibold text-on-primary shadow-[0_0_20px_rgba(152,203,255,0.3)] transition-all hover:bg-primary-fixed-dim"
+              className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-mono text-[10px] font-semibold text-on-primary shadow-[0_0_20px_rgba(152,203,255,0.3)] transition-all hover:bg-primary-fixed-dim"
             >
               <Plus className="h-4 w-4" />
               DEPOSIT REVENUE
@@ -157,16 +157,16 @@ export function FinancialLayer() {
         {!address ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-lg font-semibold text-on-surface">Connect Wallet to View Financial Layer</h2>
+            <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet to View Financial Layer</h2>
             <p className="text-sm text-on-surface-variant">Connect your wallet to manage CIF tokens and deposits.</p>
           </div>
         ) : (
           <>
             {/* Metrics Overview */}
-            <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-6 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[12px] font-semibold text-outline">TOTAL VALUE LOCKED</div>
-                <div className="flex items-baseline gap-1 font-mono text-[32px] font-semibold text-on-surface">
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-4 backdrop-blur-xl">
+                <div className="mb-2 font-mono text-[10px] font-semibold text-outline">TOTAL VALUE LOCKED</div>
+                <div className="flex items-baseline gap-1 font-mono text-base font-semibold text-on-surface">
                   {formatBOTCompact(tvl)}
                 </div>
                 <div className="mt-1 font-mono text-xs text-outline">DGRAM</div>
@@ -176,9 +176,9 @@ export function FinancialLayer() {
                 </div>
               </div>
 
-              <div className="group relative overflow-hidden rounded-2xl border border-primary/20 bg-surface-container-low p-6 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[12px] font-semibold text-primary">CIF SUPPLY</div>
-                <div className="font-mono text-[32px] font-semibold text-on-surface">{formatBOTCompact(cifSupply)}</div>
+              <div className="group relative overflow-hidden rounded-2xl border border-primary/20 bg-surface-container-low p-4 backdrop-blur-xl">
+                <div className="mb-2 font-mono text-[10px] font-semibold text-primary">CIF SUPPLY</div>
+                <div className="font-mono text-base font-semibold text-on-surface">{formatBOTCompact(cifSupply)}</div>
                 <div className="mt-1 font-mono text-xs text-outline">CIF tokens minted</div>
                 <div className="mt-4 flex w-full flex-col gap-1">
                   <div className="flex justify-between text-xs text-on-surface-variant">
@@ -191,9 +191,9 @@ export function FinancialLayer() {
                 </div>
               </div>
 
-              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-6 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[12px] font-semibold text-outline">INDEX PRICE</div>
-                <div className="font-mono text-[32px] font-semibold text-secondary-fixed">
+              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-4 backdrop-blur-xl">
+                <div className="mb-2 font-mono text-[10px] font-semibold text-outline">INDEX PRICE</div>
+                <div className="font-mono text-sm font-semibold text-secondary-fixed">
                   {indexPrice > 0n ? formatBOT(indexPrice) : '—'}
                 </div>
                 <div className="mt-1 font-mono text-xs text-outline">DGRAM per CIF</div>
@@ -202,9 +202,9 @@ export function FinancialLayer() {
                 </div>
               </div>
 
-              <div className="group relative overflow-hidden rounded-2xl border border-compute-active/20 bg-surface-container-low p-6 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[12px] font-semibold text-compute-active">YOUR CIF BALANCE</div>
-                <div className="font-mono text-[32px] font-semibold text-on-surface">{formatBOTCompact(cifBalance)}</div>
+              <div className="group relative overflow-hidden rounded-2xl border border-compute-active/20 bg-surface-container-low p-4 backdrop-blur-xl">
+                <div className="mb-2 font-mono text-[10px] font-semibold text-compute-active">YOUR CIF BALANCE</div>
+                <div className="font-mono text-base font-semibold text-on-surface">{formatBOTCompact(cifBalance)}</div>
                 <div className="mt-1 font-mono text-xs text-outline">CIF tokens</div>
                 <div className="mt-4 flex items-center justify-between">
                   <span className="text-xs text-on-surface-variant">≈ {formatBOTCompact(indexPrice > 0n ? (BigInt(cifBalance) * BigInt(indexPrice)) / 10n**18n : 0n)} DGRAM</span>
@@ -214,8 +214,8 @@ export function FinancialLayer() {
 
             {/* Deposit Form */}
             {showDeposit && (
-              <div className="rounded-2xl bg-surface-container-low p-6 border border-primary/20">
-                <h3 className="mb-3 text-lg font-semibold text-on-surface">Deposit Revenue → Mint CIF</h3>
+              <div className="rounded-2xl bg-surface-container-low p-4 border border-primary/20">
+                <h3 className="mb-3 text-sm font-semibold text-on-surface">Deposit Revenue → Mint CIF</h3>
                 {nodes.filter(n => n.verified).length === 0 ? (
                   <p className="text-sm text-on-surface-variant">
                     No verified nodes found. Register and verify a node in Node Management first.
@@ -251,13 +251,13 @@ export function FinancialLayer() {
             )}
 
             {/* Main Grid */}
-            <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-12">
+            <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
               {/* Left: Your Deposits */}
-              <div className="flex flex-col gap-6 xl:col-span-8">
-                <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md md:p-8">
+              <div className="flex flex-col gap-4 xl:col-span-8">
+                <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md md:p-8">
                   <div className="mb-8 flex items-center justify-between">
                     <div>
-                      <h2 className="text-xl font-semibold text-on-surface">Your CIF Deposits</h2>
+                      <h2 className="text-base font-semibold text-on-surface">Your CIF Deposits</h2>
                       <p className="mt-1 text-sm text-on-surface-variant">Revenue-backed tokenized positions.</p>
                     </div>
                   </div>
@@ -284,7 +284,7 @@ export function FinancialLayer() {
                               </div>
                             </div>
                             <div className="text-right">
-                              <div className="font-mono text-lg text-primary">{formatBOT(dep.mintedTokens || dep[2])}</div>
+                              <div className="font-mono text-sm text-primary">{formatBOT(dep.mintedTokens || dep[2])}</div>
                               <div className="font-mono text-[10px] uppercase text-outline">CIF Minted</div>
                             </div>
                           </div>
@@ -296,8 +296,8 @@ export function FinancialLayer() {
 
                 {/* Withdraw Section */}
                 {cifBalance > 0n && (
-                  <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md md:p-8">
-                    <h2 className="mb-3 text-lg font-semibold text-on-surface">Withdraw (Burn CIF → DGRAM)</h2>
+                  <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md md:p-8">
+                    <h2 className="mb-3 text-sm font-semibold text-on-surface">Withdraw (Burn CIF → DGRAM)</h2>
                     <p className="mb-4 text-sm text-on-surface-variant">Burn CIF tokens to withdraw DGRAM. 0.5% withdrawal fee applies.</p>
                     <div className="flex flex-col gap-3 md:flex-row">
                       <input
@@ -323,10 +323,10 @@ export function FinancialLayer() {
               </div>
 
               {/* Right Column */}
-              <div className="flex flex-col gap-6 xl:col-span-4">
+              <div className="flex flex-col gap-4 xl:col-span-4">
                 {/* How It Works */}
-                <section className="rounded-3xl bg-surface-container-low p-6 backdrop-blur-md">
-                  <h2 className="mb-3 text-lg font-semibold text-on-surface">How CIF Works</h2>
+                <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md">
+                  <h2 className="mb-3 text-sm font-semibold text-on-surface">How CIF Works</h2>
                   <div className="space-y-4">
                     <div className="flex gap-3">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">1</div>
@@ -360,7 +360,7 @@ export function FinancialLayer() {
                 </section>
 
                 {/* RWA Badge */}
-                <section className="rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-6">
+                <section className="rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4">
                   <div className="mb-3 flex items-center gap-2">
                     <ShieldCheck className="h-5 w-5 text-primary" />
                     <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-primary">RWA Verified</h3>
@@ -371,12 +371,12 @@ export function FinancialLayer() {
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <div className="rounded-lg bg-surface-container p-3">
                       <div className="font-mono text-[10px] uppercase text-outline">TVL</div>
-                      <div className="font-mono text-lg text-on-surface">{formatBOTCompact(tvl)}</div>
+                      <div className="font-mono text-sm text-on-surface">{formatBOTCompact(tvl)}</div>
                       <div className="font-mono text-[10px] text-outline">DGRAM</div>
                     </div>
                     <div className="rounded-lg bg-surface-container p-3">
                       <div className="font-mono text-[10px] uppercase text-outline">CIF Supply</div>
-                      <div className="font-mono text-lg text-on-surface">{formatBOTCompact(cifSupply)}</div>
+                      <div className="font-mono text-sm text-on-surface">{formatBOTCompact(cifSupply)}</div>
                       <div className="font-mono text-[10px] text-outline">Tokens</div>
                     </div>
                   </div>
