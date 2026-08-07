@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { PlusCircle, Activity, Cpu, AlertTriangle, ShieldCheck, Briefcase, CheckCircle, Play } from 'lucide-react';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
@@ -68,6 +68,15 @@ export function NodeManagement() {
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [dupError, setDupError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0); // forces re-render every second for countdown
+
+  // Live countdown ticker
+  useEffect(() => {
+    const hasActiveJobs = jobs.some(j => j.status === 1);
+    if (!hasActiveJobs) return;
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [jobs]);
 
   // Load provider's jobs
   async function loadJobs() {
@@ -634,28 +643,44 @@ export function NodeManagement() {
                         </button>
                       )}
                       {job.status === 1 && (() => {
+                        // tick referenced to force re-render
+                        void tick;
                         const elapsed = Math.floor(Date.now() / 1000) - job.startedAt;
                         const total = Number(job.durationHours) * 3600;
                         const remaining = Math.max(0, total - elapsed);
                         const isExpired = remaining === 0;
-                        const mins = Math.floor(remaining / 60);
-                        const secs = remaining % 60;
-                        const hh = Math.floor(mins / 60);
-                        const mm = mins % 60;
+                        const hh = Math.floor(remaining / 3600);
+                        const mm = Math.floor((remaining % 3600) / 60);
+                        const ss = remaining % 60;
+                        const pad = (n: number) => n.toString().padStart(2, '0');
+                        const urgency = remaining < 300 ? 'text-compute-down' : remaining < 900 ? 'text-yellow-400' : 'text-on-surface-variant';
                         return (
-                          <div className="flex flex-col items-end gap-1">
-                            <button
-                              onClick={() => handleCompleteJob(job.jobId)}
-                              disabled={txPending || !isExpired}
-                              title={isExpired ? "Complete Job" : "Wait for lease duration to end"}
-                              className={`flex items-center gap-1 rounded px-2 py-1.5 font-mono text-[10px] font-semibold disabled:opacity-40 ${isExpired ? 'bg-primary/20 text-primary' : 'bg-surface text-outline cursor-not-allowed'}`}
-                            >
-                              <CheckCircle className="h-3 w-3" /> {isExpired ? 'DONE' : 'LOCKED'}
-                            </button>
-                            {!isExpired && (
-                              <span className="font-mono text-[10px] text-compute-down">
-                                {hh.toString().padStart(2,'0')}:{mm.toString().padStart(2,'0')}:{secs.toString().padStart(2,'0')}
-                              </span>
+                          <div className="flex flex-col items-end gap-1.5">
+                            {!isExpired ? (
+                              <>
+                                <div className={`flex items-center gap-1.5 rounded bg-surface px-2 py-1.5 ${urgency}`}>
+                                  <span className="font-mono text-[10px] font-bold tracking-wider">
+                                    {pad(hh)}:{pad(mm)}:{pad(ss)}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => handleCompleteJob(job.jobId)}
+                                  disabled={true}
+                                  title="Wait for lease duration to end"
+                                  className="flex items-center gap-1 rounded bg-surface-container-highest px-2 py-1 font-mono text-[9px] font-semibold text-outline cursor-not-allowed"
+                                >
+                                  <CheckCircle className="h-2.5 w-2.5" /> LOCKED
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => handleCompleteJob(job.jobId)}
+                                disabled={txPending}
+                                title="Complete Job"
+                                className="flex items-center gap-1 rounded bg-primary/20 px-2 py-1.5 font-mono text-[10px] font-semibold text-primary hover:bg-primary/30"
+                              >
+                                <CheckCircle className="h-3 w-3" /> DONE
+                              </button>
                             )}
                           </div>
                         );
