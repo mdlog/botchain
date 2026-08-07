@@ -152,6 +152,7 @@ contract ComputeMarketplace {
 
     /**
      * @notice Provider marks job as completed. Revenue is settled.
+     *         Provider is paid only for actual time worked.
      *         Excess payment is refunded to consumer (from this job only).
      */
     function completeJob(uint256 jobId) external {
@@ -162,24 +163,32 @@ contract ComputeMarketplace {
         job.status = JobStatus.Completed;
         job.completedAt = uint64(block.timestamp);
 
-        uint256 totalCost = job.pricePerHourWei * job.durationHours;
+        // Calculate actual time worked (cap at booked duration)
+        uint256 actualSeconds = uint256(job.completedAt - job.startedAt);
+        uint256 maxSeconds = uint256(job.durationHours) * 3600;
+        if (actualSeconds > maxSeconds) {
+            actualSeconds = maxSeconds;
+        }
 
-        // Pay provider
-        (bool ok, ) = job.provider.call{value: totalCost}("");
+        // Cost = pricePerHour * (actualSeconds / 3600)
+        uint256 actualCost = (job.pricePerHourWei * actualSeconds) / 3600;
+
+        // Pay provider for actual time only
+        (bool ok, ) = job.provider.call{value: actualCost}("");
         require(ok, "Payment failed");
 
-        // Refund excess to consumer — ONLY from this job's payment
-        uint256 refund = job.paymentAmount - totalCost;
+        // Refund unused time to consumer
+        uint256 refund = job.paymentAmount - actualCost;
         if (refund > 0) {
             (bool ok2, ) = job.consumer.call{value: refund}("");
             require(ok2, "Refund failed");
         }
 
         // Update registry revenue
-        registry.addRevenue(job.nodeId, uint96(totalCost));
-        totalVolumeWei += totalCost;
+        registry.addRevenue(job.nodeId, uint96(actualCost));
+        totalVolumeWei += actualCost;
 
-        emit JobCompleted(jobId, job.completedAt, totalCost, refund);
+        emit JobCompleted(jobId, job.completedAt, actualCost, refund);
     }
 
     /**

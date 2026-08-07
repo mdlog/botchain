@@ -42,6 +42,7 @@ interface JobRow {
   durationHours: bigint;
   status: number;
   startedAt: number;
+  paymentAmount: bigint;
 }
 
 const JOB_LABELS = ['Pending', 'Active', 'Completed', 'Cancelled', 'Disputed'];
@@ -88,6 +89,7 @@ export function NodeManagement() {
               durationHours: job.durationHours,
               status: Number(job.status),
               startedAt: Number(job.startedAt),
+              paymentAmount: job.paymentAmount,
             });
           }
         } catch {}
@@ -631,16 +633,33 @@ export function NodeManagement() {
                           <Play className="h-3 w-3" /> ACCEPT
                         </button>
                       )}
-                      {job.status === 1 && (
-                        <button
-                          onClick={() => handleCompleteJob(job.jobId)}
-                          disabled={txPending}
-                          title="Complete Job"
-                          className="flex items-center gap-1 rounded bg-primary/20 px-2 py-1.5 font-mono text-[10px] font-semibold text-primary disabled:opacity-50"
-                        >
-                          <CheckCircle className="h-3 w-3" /> DONE
-                        </button>
-                      )}
+                      {job.status === 1 && (() => {
+                        const elapsed = Math.floor(Date.now() / 1000) - job.startedAt;
+                        const total = Number(job.durationHours) * 3600;
+                        const remaining = Math.max(0, total - elapsed);
+                        const isExpired = remaining === 0;
+                        const mins = Math.floor(remaining / 60);
+                        const secs = remaining % 60;
+                        const hh = Math.floor(mins / 60);
+                        const mm = mins % 60;
+                        return (
+                          <div className="flex flex-col items-end gap-1">
+                            <button
+                              onClick={() => handleCompleteJob(job.jobId)}
+                              disabled={txPending || !isExpired}
+                              title={isExpired ? "Complete Job" : "Wait for lease duration to end"}
+                              className={`flex items-center gap-1 rounded px-2 py-1.5 font-mono text-[10px] font-semibold disabled:opacity-40 ${isExpired ? 'bg-primary/20 text-primary' : 'bg-surface text-outline cursor-not-allowed'}`}
+                            >
+                              <CheckCircle className="h-3 w-3" /> {isExpired ? 'DONE' : 'LOCKED'}
+                            </button>
+                            {!isExpired && (
+                              <span className="font-mono text-[10px] text-compute-down">
+                                {hh.toString().padStart(2,'0')}:{mm.toString().padStart(2,'0')}:{secs.toString().padStart(2,'0')}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {(job.status === 2 || job.status === 3) && (
                         <span className="font-mono text-[10px] text-outline">—</span>
                       )}

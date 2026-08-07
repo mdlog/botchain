@@ -42,10 +42,10 @@ export const publicClient = createPublicClient({
 
 // ── Contract addresses (deployed on BOT Chain Testnet) ──
 export const CONTRACTS = {
-  ComputeRegistry: '0x71aD5e31D0DCf1b0f9e5723Ca04D3822F2023ff3' as Address,
-  PriceOracle: '0x67b0A83AA966986cACF7FbBd2a9eada201250744' as Address,
-  ComputeMarketplace: '0xAa5C9673fa9a7E3ED16341420471581c10Dd23EB' as Address,
-  ComputeIndexToken: '0xa07f2290F26Aca288F140D5fE83B2E9012964183' as Address,
+  ComputeRegistry: '0xc612111b8648B73ED23CF19f400488566af76Ddc' as Address,
+  PriceOracle: '0x8674305cb18521E75C01D0162d209ea22767fc33' as Address,
+  ComputeMarketplace: '0x7278045051843BbdD7786B493de0681904075f02' as Address,
+  ComputeIndexToken: '0x0D3FeE7457066662C1a30C3DAC7f18b907Feab1b' as Address,
 } as const;
 
 // ── Helper: create wallet client from window.ethereum ────
