@@ -282,6 +282,52 @@ botchain-hackathon/
 - **Timeline:** Aug 10–20, 2026
 - **Compliance:** Asset authenticity (hardware fingerprint), complete business loop (lease→execute→settle→tokenize), AI as core capability (pricing engine)
 
+## 🗺️ Roadmap
+
+### v1 — CIF Index Fund (Current)
+Single ERC20 token representing fractional ownership of **all** compute revenue on the platform (S&P 500-style index fund for GPU compute).
+
+- ✅ Single `ComputeIndexToken` contract
+- ✅ Deposit revenue → mint CIF 1:1
+- ✅ Burn CIF → withdraw proportional TVL share
+- ✅ Tradeable on BDEX
+
+### v2 — Per-Provider CIF + Auto-Rebalancing Index (Production)
+Two-layer token architecture for granular risk management and price discovery:
+
+```
+Layer 1: Per-Provider CIF Tokens (granular)
+──────────────────────────────────────────
+CIF-Node#1 (RTX 3060×4)  → backed by Node #1 revenue
+CIF-Node#2 (H100)        → backed by Node #2 revenue
+CIF-Node#3 (RTX 3090)    → backed by Node #3 revenue
+
+Layer 2: CIF Index Token (aggregated)
+──────────────────────────────────────────
+CIF-INDEX = auto-basket of all per-provider tokens
+  ├─ weighted by per-node TVL
+  ├─ auto-rebalanced on each deposit
+  └─ NAV = sum(per-provider NAV × weight)
+```
+
+**New contracts:**
+- `ComputeIndexTokenFactory` — deploys per-provider CIF tokens, manages index composition
+- `CIFNodeToken` (per-provider) — deposit/withdraw tied to specific node revenue
+- `CIFIndexToken` (v2 upgrade) — auto-rebalancing basket of all `CIFNodeToken` contracts
+
+**Benefits:**
+- **Price discovery per GPU type** — H100 CIF trades at premium vs RTX 3060 CIF
+- **Risk isolation** — one node going offline doesn't tank the entire pool
+- **Investor choice** — pick specific providers or buy the index for diversification
+- **Provider reputation** — high-performing providers earn premium pricing on their CIF tokens
+- **Automated rebalancing** — index weights adjust based on revenue performance
+
+### v3 — BDEX Integration + Secondary Market
+- Native liquidity pools on BDEX for per-provider CIF tokens
+- Automated market maker (AMM) for CIF-INDEX ↔ DGRAM
+- Revenue streaming — providers deposit continuously, CIF minted in real-time
+- On-chain risk scoring per node (uptime, job completion rate, revenue consistency)
+
 ## 📜 License
 
 MIT
