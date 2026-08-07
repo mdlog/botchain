@@ -41,7 +41,7 @@ export interface ExecutionResult {
 // For hackathon MVP, we use a config map
 const NODE_AGENT_URLS: Record<number, string> = {
   1: 'https://agent.mdloglabs.org',    // Node #1 — mdlog-desktop
-  2: 'https://agent2.mdloglabs.org',   // Node #2 — laptop 2
+  2: 'https://period-operator-kitchen-porter.trycloudflare.com',   // Node #2 — laptop 2
 };
 
 const DEFAULT_AGENT_URL = 'https://agent.mdloglabs.org';
