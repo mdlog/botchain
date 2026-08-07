@@ -62,7 +62,7 @@ function useCountdown(startedAt: number, durationHours: bigint, extensions: numb
     return () => clearInterval(interval);
   }, [startedAt, durationHours, extensions]);
 
-  const expired = remaining <= 0;
+  const expired = totalDuration > 0 && remaining <= 0;
   const progress = totalDuration > 0 ? ((totalDuration - remaining) / totalDuration) * 100 : 0;
   const urgency = remaining < totalDuration * 0.1 ? 'critical' : remaining < totalDuration * 0.3 ? 'warning' : 'normal';
 
