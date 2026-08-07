@@ -9,8 +9,9 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
     "viem": "^2.55.11"
   }
 }

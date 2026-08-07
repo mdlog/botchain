@@ -12,6 +12,7 @@
  * 5. Agent marks job complete on-chain when done
  */
 
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createPublicClient, createWalletClient, http, formatEther } from 'viem';
