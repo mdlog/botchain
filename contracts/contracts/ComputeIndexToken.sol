@@ -138,7 +138,8 @@ contract ComputeIndexToken {
         (bool ok, ) = msg.sender.call{value: payout}("");
         require(ok, "Withdrawal failed");
 
-        totalValueLocked -= payout;
+        // TVL decreases by full amount (fee becomes protocol revenue)
+        totalValueLocked -= amount;
 
         emit Withdrawn(msg.sender, payout, amount);
     }

@@ -38,13 +38,19 @@ contract ComputeRegistry {
     mapping(uint256 => ComputeNode) public nodes;
     mapping(address => uint256[]) public providerNodes;
     uint256 public nextNodeId = 1;
+    address public owner;
     uint256 public totalActiveNodes;
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    address public marketplace;  // authorized marketplace contract
 
     // ── Events ─────────────────────────────────────────────
     event NodeRegistered(uint256 indexed nodeId, address indexed provider, string model, string region);
     event NodeStatusUpdated(uint256 indexed nodeId, NodeStatus newStatus);
     event NodeVerified(uint256 indexed nodeId);
     event RevenueUpdated(uint256 indexed nodeId, uint96 newTotal);
+    event MarketplaceSet(address marketplace);
 
     // ── Modifiers ──────────────────────────────────────────
     modifier onlyProvider(uint256 nodeId) {
@@ -55,6 +61,16 @@ contract ComputeRegistry {
     modifier nodeExists(uint256 nodeId) {
         require(nodeId > 0 && nodeId < nextNodeId, "Node does not exist");
         _;
+    }
+
+    modifier onlyMarketplace() {
+        require(msg.sender == marketplace, "Only marketplace");
+        _;
+    }
+
+    // ── Constructor ────────────────────────────────────────
+    constructor() {
+        owner = msg.sender;
     }
 
     // ── External Functions ─────────────────────────────────
@@ -132,13 +148,22 @@ contract ComputeRegistry {
     }
 
     /**
+     * @notice Set marketplace contract (owner only).
+     */
+    function setMarketplace(address _marketplace) external {
+        require(msg.sender == owner || marketplace == address(0), "Not authorized");
+        marketplace = _marketplace;
+        emit MarketplaceSet(_marketplace);
+    }
+
+    /**
      * @notice Add revenue to a node (called by marketplace on job settlement).
      */
     function addRevenue(uint256 nodeId, uint96 amount)
         external
         nodeExists(nodeId)
+        onlyMarketplace
     {
-        // In production, restricted to Marketplace contract
         nodes[nodeId].totalRevenue += amount;
         emit RevenueUpdated(nodeId, nodes[nodeId].totalRevenue);
     }

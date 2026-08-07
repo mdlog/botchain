@@ -1,10 +1,11 @@
 {
   "network": "968",
   "contracts": {
-    "ComputeRegistry": "0x91778B39490e6193c27A32a35dd33b7B14F54EC0",
-    "PriceOracle": "0x95D102579C544BA2756F344eC2Ad09D677CFAe49",
-    "ComputeMarketplace": "0xd93C4006888d5A707b9e072685d6aD36a91228d2",
-    "ComputeIndexToken": "0xE61DD019294Ab52eF69714a948E65b9a31947c1e"
+    "ComputeRegistry": "0x71aD5e31D0DCf1b0f9e5723Ca04D3822F2023ff3",
+    "PriceOracle": "0x67b0A83AA966986cACF7FbBd2a9eada201250744",
+    "ComputeMarketplace": "0xAa5C9673fa9a7E3ED16341420471581c10Dd23EB",
+    "ComputeIndexToken": "0xa07f2290F26Aca288F140D5fE83B2E9012964183"
   },
-  "deployedAt": "2026-08-07T00:37:00.000Z"
+  "deployedAt": "2026-08-07T07:24:00.000Z",
+  "changes": "Fixed: marketplace refund bug, registry access control, CIF TVL calculation"
 }

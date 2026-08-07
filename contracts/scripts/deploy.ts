@@ -4,7 +4,7 @@ const { ethers } = pkg;
 async function main() {
   const [deployer] = await ethers.getSigners();
   console.log("Deploying with account:", deployer.address);
-  console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "BOT");
+  console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "DGRAM");
 
   // ── 1. Deploy ComputeRegistry ───────────────────────────
   const ComputeRegistry = await ethers.getContractFactory("ComputeRegistry");
@@ -34,35 +34,48 @@ async function main() {
   const cifAddr = await cif.getAddress();
   console.log("✅ ComputeIndexToken (CIF) deployed:", cifAddr);
 
-  // ── 5. Seed PriceOracle with GPU benchmarks ─────────────
-  const tx1 = await oracle.setBenchmark("NVIDIA H100", 50000);
-  await tx1.wait();
-  const tx2 = await oracle.setBenchmark("NVIDIA A100", 30000);
-  await tx2.wait();
-  const tx3 = await oracle.setBenchmark("NVIDIA RTX 4090", 15000);
-  await tx3.wait();
-  const tx4 = await oracle.setBenchmark("NVIDIA RTX 3090", 8000);
-  await tx4.wait();
-  console.log("✅ GPU benchmarks set (H100, A100, RTX 4090, RTX 3090)");
+  // ── 5. Set marketplace address on registry ─────────────
+  const txSetMkt = await registry.setMarketplace(marketplaceAddr);
+  await txSetMkt.wait();
+  console.log("✅ Marketplace authorized on registry");
 
-  // ── 6. Seed initial prices (AI will update later) ──────
+  // ── 6. Seed PriceOracle with GPU benchmarks ─────────────
+  const benchmarks = [
+    { model: "NVIDIA H100", bps: 50000 },
+    { model: "NVIDIA A100", bps: 30000 },
+    { model: "NVIDIA RTX 4090", bps: 15000 },
+    { model: "NVIDIA RTX 3090", bps: 8000 },
+    { model: "NVIDIA RTX 3060", bps: 3000 },
+    { model: "AMD Radeon GPU", bps: 2500 },
+    { model: "CPU Only", bps: 500 },
+  ];
+  for (const b of benchmarks) {
+    const tx = await oracle.setBenchmark(b.model, b.bps);
+    await tx.wait();
+  }
+  console.log("✅ GPU benchmarks set (7 models including AMD Radeon + CPU Only)");
+
+  // ── 7. Seed initial prices ──────────────────────────────
   const prices = [
     { model: "NVIDIA H100", price: ethers.parseEther("3.10"), confidence: 8500 },
     { model: "NVIDIA A100", price: ethers.parseEther("1.80"), confidence: 8800 },
     { model: "NVIDIA RTX 4090", price: ethers.parseEther("0.85"), confidence: 9200 },
     { model: "NVIDIA RTX 3090", price: ethers.parseEther("0.45"), confidence: 9000 },
+    { model: "NVIDIA RTX 3060", price: ethers.parseEther("0.15"), confidence: 8500 },
+    { model: "AMD Radeon GPU", price: ethers.parseEther("0.12"), confidence: 8500 },
+    { model: "CPU Only", price: ethers.parseEther("0.02"), confidence: 7000 },
   ];
 
   for (const p of prices) {
     const tx = await oracle.updatePrice(p.model, p.price, p.confidence);
     await tx.wait();
-    console.log(`  → ${p.model}: ${ethers.formatEther(p.price)} BOT/hr (conf: ${p.confidence / 100}%)`);
+    console.log(`  → ${p.model}: ${ethers.formatEther(p.price)} DGRAM/hr (conf: ${p.confidence / 100}%)`);
   }
   console.log("✅ Initial prices seeded");
 
   // ── Summary ─────────────────────────────────────────────
   console.log("\n═════════════════════════════════════════════");
-  console.log("  DEPLOYMENT SUMMARY");
+  console.log("  DEPLOYMENT SUMMARY (FIXED CONTRACTS)");
   console.log("═════════════════════════════════════════════");
   console.log(`  ComputeRegistry:    ${registryAddr}`);
   console.log(`  PriceOracle:        ${oracleAddr}`);

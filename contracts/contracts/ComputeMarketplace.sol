@@ -56,6 +56,7 @@ contract ComputeMarketplace {
         string jobType;          // e.g. "LLM Training", "Inference"
         string specHash;         // IPFS/hash of job spec
         uint256 pricePerHourWei; // BOT/hr locked at creation
+        uint256 paymentAmount;   // actual BOT paid by consumer (for refund)
         uint64 durationHours;    // requested duration
         uint64 startedAt;        // when provider accepted
         uint64 completedAt;      // when job finished
@@ -73,10 +74,10 @@ contract ComputeMarketplace {
     uint256 public totalJobs;
 
     // ── Events ─────────────────────────────────────────────
-    event JobCreated(uint256 indexed jobId, uint256 indexed nodeId, address indexed consumer, string jobType, uint64 durationHours, uint256 pricePerHourWei);
+    event JobCreated(uint256 indexed jobId, uint256 indexed nodeId, address indexed consumer, string jobType, uint64 durationHours, uint256 pricePerHourWei, uint256 paymentAmount);
     event JobAccepted(uint256 indexed jobId, address indexed provider);
-    event JobCompleted(uint256 indexed jobId, uint64 completedAt, uint256 totalCost);
-    event JobCancelled(uint256 indexed jobId);
+    event JobCompleted(uint256 indexed jobId, uint64 completedAt, uint256 totalCost, uint256 refund);
+    event JobCancelled(uint256 indexed jobId, uint256 refund);
 
     // ── Constructor ────────────────────────────────────────
     constructor(address _registry, address _oracle) {
@@ -122,6 +123,7 @@ contract ComputeMarketplace {
             jobType: jobType,
             specHash: specHash,
             pricePerHourWei: pricePerHour,
+            paymentAmount: msg.value,
             durationHours: durationHours,
             startedAt: 0,
             completedAt: 0,
@@ -129,7 +131,7 @@ contract ComputeMarketplace {
         });
 
         totalJobs++;
-        emit JobCreated(jobId, nodeId, msg.sender, jobType, durationHours, pricePerHour);
+        emit JobCreated(jobId, nodeId, msg.sender, jobType, durationHours, pricePerHour, msg.value);
     }
 
     // ── Provider Functions ─────────────────────────────────
@@ -150,7 +152,7 @@ contract ComputeMarketplace {
 
     /**
      * @notice Provider marks job as completed. Revenue is settled.
-     *         Excess payment is refunded to consumer.
+     *         Excess payment is refunded to consumer (from this job only).
      */
     function completeJob(uint256 jobId) external {
         ComputeJob storage job = jobs[jobId];
@@ -166,8 +168,8 @@ contract ComputeMarketplace {
         (bool ok, ) = job.provider.call{value: totalCost}("");
         require(ok, "Payment failed");
 
-        // Refund excess to consumer
-        uint256 refund = address(this).balance;
+        // Refund excess to consumer — ONLY from this job's payment
+        uint256 refund = job.paymentAmount - totalCost;
         if (refund > 0) {
             (bool ok2, ) = job.consumer.call{value: refund}("");
             require(ok2, "Refund failed");
@@ -177,11 +179,12 @@ contract ComputeMarketplace {
         registry.addRevenue(job.nodeId, uint96(totalCost));
         totalVolumeWei += totalCost;
 
-        emit JobCompleted(jobId, job.completedAt, totalCost);
+        emit JobCompleted(jobId, job.completedAt, totalCost, refund);
     }
 
     /**
      * @notice Consumer cancels a pending job (before provider accepts).
+     *         Full payment refunded.
      */
     function cancelJob(uint256 jobId) external {
         ComputeJob storage job = jobs[jobId];
@@ -190,12 +193,14 @@ contract ComputeMarketplace {
 
         job.status = JobStatus.Cancelled;
 
-        // Refund full amount
-        uint256 totalCost = job.pricePerHourWei * job.durationHours;
-        (bool ok, ) = job.consumer.call{value: totalCost}("");
-        require(ok, "Refund failed");
+        // Refund full payment amount
+        uint256 refund = job.paymentAmount;
+        if (refund > 0) {
+            (bool ok, ) = job.consumer.call{value: refund}("");
+            require(ok, "Refund failed");
+        }
 
-        emit JobCancelled(jobId);
+        emit JobCancelled(jobId, refund);
     }
 
     // ── View Functions ─────────────────────────────────────

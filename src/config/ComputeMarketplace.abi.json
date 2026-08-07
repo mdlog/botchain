@@ -42,6 +42,12 @@
         "internalType": "uint256",
         "name": "jobId",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "refund",
+        "type": "uint256"
       }
     ],
     "name": "JobCancelled",
@@ -66,6 +72,12 @@
         "indexed": false,
         "internalType": "uint256",
         "name": "totalCost",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "refund",
         "type": "uint256"
       }
     ],
@@ -109,6 +121,12 @@
         "indexed": false,
         "internalType": "uint256",
         "name": "pricePerHourWei",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "paymentAmount",
         "type": "uint256"
       }
     ],
@@ -236,6 +254,11 @@
             "type": "uint256"
           },
           {
+            "internalType": "uint256",
+            "name": "paymentAmount",
+            "type": "uint256"
+          },
+          {
             "internalType": "uint64",
             "name": "durationHours",
             "type": "uint64"
@@ -321,6 +344,11 @@
       {
         "internalType": "uint256",
         "name": "pricePerHourWei",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "paymentAmount",
         "type": "uint256"
       },
       {
