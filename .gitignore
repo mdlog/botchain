@@ -22,6 +22,10 @@ contracts/.env
 # Compute agent workspace (runtime files)
 compute-agent/workspace/
 
+# Rust build artifacts
+compute-agent-rs/target/
+compute-agent-rs/Cargo.lock
+
 # IDE
 .vscode/
 .idea/

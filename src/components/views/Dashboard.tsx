@@ -221,7 +221,7 @@ export function Dashboard() {
                             <span className="mb-0.5 block font-mono text-[9px] font-semibold text-outline">TOTAL REVENUE</span>
                             <span className="font-mono text-xs font-medium text-compute-active">{formatBOTCompact(node.totalRevenue)} DGRAM</span>
                           </div>
-                          <button className="flex h-6 w-6 items-center justify-center rounded-full bg-surface text-outline transition-colors hover:bg-surface-bright hover:text-primary">
+                          <button className="cursor-pointer flex h-6 w-6 items-center justify-center rounded-full bg-surface text-outline transition-colors hover:bg-surface-bright hover:text-primary">
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>
                         </div>

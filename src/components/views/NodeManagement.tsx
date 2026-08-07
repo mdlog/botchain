@@ -26,8 +26,38 @@ const GPU_OPTIONS = [
   { model: 'NVIDIA RTX 4090', vram: 24, tflops: 165 },
   { model: 'NVIDIA RTX 3090', vram: 24, tflops: 71 },
   { model: 'NVIDIA RTX 3060', vram: 12, tflops: 13 },
+  { model: 'AMD Radeon GPU', vram: 12, tflops: 10 },
   { model: 'CPU Only', vram: 0, tflops: 0 },
 ];
+
+const AGENT_URL = 'https://agent.mdloglabs.org';
+
+// TFLOPS lookup for per-GPU estimation
+const GPU_TFLOPS: Record<string, number> = {
+  'nvidia h100': 989,
+  'nvidia a100': 624,
+  'nvidia rtx 5090': 105,
+  'nvidia rtx 4090': 165,
+  'nvidia rtx 4080': 97,
+  'nvidia rtx 4070': 48,
+  'nvidia rtx 3090': 71,
+  'nvidia rtx 3080': 35,
+  'nvidia rtx 3070': 21,
+  'nvidia rtx 3060 ti': 8,
+  'nvidia rtx 3060': 13,
+  'nvidia rtx 3050': 6,
+  'nvidia gtx 1660': 14,
+  'nvidia gtx 1080': 9,
+  'nvidia gtx 1070': 6.5,
+};
+
+function getTflopsForGpuModel(model: string): number {
+  const m = model.toLowerCase();
+  for (const [key, val] of Object.entries(GPU_TFLOPS)) {
+    if (m.includes(key)) return val;
+  }
+  return 10; // fallback
+}
 
 const REGIONS = ['US-EAST', 'US-WEST', 'EU-CENTRAL', 'EU-WEST', 'AP-SOUTH', 'AP-NORTHEAST'];
 const STATUS_LABELS = ['Inactive', 'Active', 'Busy', 'Offline'];
@@ -65,9 +95,11 @@ export function NodeManagement() {
   const [formVram, setFormVram] = useState(GPU_OPTIONS[0].vram);
   const [formTflops, setFormTflops] = useState(GPU_OPTIONS[0].tflops);
   const [formRegion, setFormRegion] = useState(REGIONS[0]);
+  const [formGpuCount, setFormGpuCount] = useState(1);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [dupError, setDupError] = useState<string | null>(null);
+  const [agentGpuInfo, setAgentGpuInfo] = useState<any>(null);
   const [tick, setTick] = useState(0); // forces re-render every second for countdown
 
   // Live countdown ticker
@@ -208,20 +240,75 @@ export function NodeManagement() {
     setDetecting(true);
     setDupError(null);
     try {
+      // First: try agent-side detection (nvidia-smi — detects ALL GPUs in rig)
+      let agentGpus: any = null;
+      try {
+        const resp = await fetch(`${AGENT_URL}/info`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.gpu_summary && data.gpu_summary.count > 0) {
+            agentGpus = data.gpu_summary;
+            setAgentGpuInfo(agentGpus);
+          }
+        }
+      } catch {}
+
+      if (agentGpus) {
+        // Agent detected GPUs via nvidia-smi — use this (most accurate)
+        const unifiedModel: string = agentGpus.unified_model;
+        const count: number = agentGpus.count;
+        const totalVramMB: number = agentGpus.total_vram_mb;
+        const totalVramGB = Math.round(totalVramMB / 1024);
+
+        // Estimate TFLOPS: per-GPU × count
+        const firstModel: string = agentGpus.models[0] || unifiedModel;
+        const perTflops = getTflopsForGpuModel(firstModel);
+        const totalTflops = Math.round(perTflops * count * 10) / 10;
+
+        // Check duplicate
+        const existing = nodes.find(n =>
+          n.model.toLowerCase() === unifiedModel.toLowerCase()
+        );
+        if (existing) {
+          setDupError(`"${unifiedModel}" is already registered as Node #${existing.nodeId.toString()}.`);
+          return;
+        }
+
+        setFormModel(unifiedModel);
+        setFormVram(totalVramGB);
+        setFormTflops(totalTflops);
+        setFormGpuCount(count);
+        setHardware({
+          gpuModel: unifiedModel,
+          vramGB: totalVramGB,
+          cpuCores: navigator.hardwareConcurrency || 0,
+          cpuModel: '',
+          ramGB: (navigator as any).deviceMemory || 0,
+          storageGB: 0,
+          screen: '',
+          detected: true,
+          rawGpuString: `${count}× ${firstModel}`,
+          fingerprint: '',
+          hasGpu: true,
+        });
+        return;
+      }
+
+      // Fallback: browser WebGL detection (single GPU only)
       const info = await detectHardware();
       setHardware(info);
-      // Check for duplicate among existing nodes
+      setAgentGpuInfo(null);
+      setFormGpuCount(1);
       const existingLabel = info.hasGpu ? info.gpuModel : `CPU-${info.cpuCores}cores`;
-      const existing = nodes.find(n => 
+      const existing = nodes.find(n =>
         n.model.toLowerCase() === existingLabel.toLowerCase()
       );
       if (existing) {
-        setDupError(`"${existingLabel}" is already registered as Node #${existing.nodeId.toString()}. Duplicate registration is not allowed.`);
+        setDupError(`"${existingLabel}" is already registered as Node #${existing.nodeId.toString()}.`);
         return;
       }
       if (info.hasGpu) {
-        // GPU node
-        const match = GPU_OPTIONS.find(g => 
+        const match = GPU_OPTIONS.find(g =>
           info.gpuModel.toLowerCase().includes(g.model.toLowerCase().replace('nvidia ', ''))
         );
         if (match) {
@@ -234,7 +321,6 @@ export function NodeManagement() {
           setFormTflops(getTflopsForModel(info.gpuModel, 0, true) || 10);
         }
       } else {
-        // CPU-only node
         setFormModel('CPU Only');
         setFormVram(0);
         setFormTflops(getTflopsForModel('CPU Only', info.cpuCores, false));

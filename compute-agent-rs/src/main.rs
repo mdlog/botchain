@@ -17,6 +17,7 @@
 mod chain;
 mod sandbox;
 mod monitor;
+mod gpu;
 
 use axum::{
     extract::{Path, State},
@@ -83,6 +84,7 @@ struct InfoResponse {
     provider: String,
     node_ids: Vec<u64>,
     runtimes: Vec<String>,
+    gpu_summary: gpu::GpuSummary,
 }
 
 #[derive(Deserialize)]
@@ -132,10 +134,15 @@ async fn info(State(state): State<AppState>) -> Result<Json<InfoResponse>, (Stat
         runtimes.push("node".to_string());
     }
 
+    let gpu_summary = gpu::get_gpu_summary();
+
+    info!("📋 /info — provider={}, nodes={:?}, gpus={}", addr, node_ids, gpu_summary.unified_model);
+
     Ok(Json(InfoResponse {
         provider: addr.to_string(),
         node_ids,
         runtimes,
+        gpu_summary,
     }))
 }
 
