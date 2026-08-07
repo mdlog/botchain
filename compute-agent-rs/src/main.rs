@@ -87,9 +87,11 @@ struct InfoResponse {
 
 #[derive(Deserialize)]
 struct ExecuteRequest {
+    #[serde(alias = "jobId")]
     job_id: Option<u64>,
     language: String,
     code: String,
+    #[serde(alias = "timeoutSecs")]
     timeout_secs: Option<u64>,
 }
 

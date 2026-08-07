@@ -40,8 +40,8 @@ export interface ExecutionResult {
 // Provider agent URLs per node — in production this comes from node metadata on-chain
 // For hackathon MVP, we use a config map
 const NODE_AGENT_URLS: Record<number, string> = {
-  1: 'https://agent.mdloglabs.org',    // Node #1 — mdlog-desktop
-  2: 'https://period-operator-kitchen-porter.trycloudflare.com',   // Node #2 — laptop 2
+  1: 'https://agent.mdloglabs.org',    // Node #1 — mdlog-desktop (old)
+  2: 'https://agent.mdloglabs.org',    // Node #2 — re-registered on desktop
 };
 
 const DEFAULT_AGENT_URL = 'https://agent.mdloglabs.org';
