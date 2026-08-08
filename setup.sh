@@ -3,7 +3,7 @@
 # ComputeRWA Provider Setup Script
 # BOT Chain DePIN — One-command node registration
 #
-# Usage:
+# Usage (updated $(date +%Y-%m-%d)):
 #   curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | bash
 #
 # Security:
