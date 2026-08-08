@@ -23,6 +23,7 @@ const config: HardhatUserConfig = {
     sources: "./contracts",
     artifacts: "./artifacts",
     cache: "./cache",
+    // @ts-ignore
     deployments: "./deployments",
   },
   networks: {

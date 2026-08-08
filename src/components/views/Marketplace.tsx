@@ -124,6 +124,8 @@ export function Marketplace() {
                 verified: node.verified,
                 pricePerHour: priceInfo?.pricePerHourWei || 0n,
                 confidence: priceInfo?.confidence || 0,
+                jobCount: 0,
+                completedJobs: 0,
               });
             }
           } catch {}

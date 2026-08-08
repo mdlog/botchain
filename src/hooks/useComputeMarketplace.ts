@@ -124,7 +124,7 @@ export function useComputeMarketplace() {
             { type: 'uint256', name: 'paymentAmount', indexed: false },
           ],
         },
-        args: [undefined, nodeId],
+        args: [undefined, nodeId] as any,
         fromBlock: 0n,
         toBlock: 'latest',
       });
