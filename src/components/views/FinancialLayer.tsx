@@ -138,7 +138,7 @@ export function FinancialLayer() {
         {/* Header */}
         <header className="flex flex-col items-start justify-between gap-4 border-b border-outline-variant/10 pb-6 md:flex-row md:items-end">
           <div>
-            <h1 className="text-base font-bold leading-tight tracking-tight text-on-background">Financial Layer</h1>
+            <h1 className="text-base font-bold leading-tight tracking-tight text-on-background">Finance</h1>
             <p className="mt-1 max-w-2xl text-xs text-on-surface-variant">
               Deposit compute revenue to mint CIF tokens — fractional ownership of real-world GPU assets on BOT Chain.
             </p>
@@ -157,7 +157,7 @@ export function FinancialLayer() {
         {!address ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
             <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet to View Financial Layer</h2>
+            <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet to View Finance</h2>
             <p className="text-sm text-on-surface-variant">Connect your wallet to manage CIF tokens and deposits.</p>
           </div>
         ) : (

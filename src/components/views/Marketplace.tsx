@@ -232,7 +232,7 @@ export function Marketplace() {
       <div className="flex-1 overflow-y-auto bg-gradient-to-b from-surface/50 to-surface p-8 pb-32">
         {/* Header */}
         <div className="mb-6">
-          <h2 className="text-base font-semibold text-on-surface">Compute Marketplace</h2>
+          <h2 className="text-base font-semibold text-on-surface">Explore Compute</h2>
           <p className="mt-1 text-sm text-on-surface-variant">Lease verified GPU compute on BOT Chain. Prices set by AI oracle.</p>
         </div>
 

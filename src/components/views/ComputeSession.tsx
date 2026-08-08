@@ -210,7 +210,7 @@ export function ComputeSession() {
       <div className="flex h-full flex-col items-center justify-center pt-20">
         <Cpu className="mb-4 h-12 w-12 text-outline" />
         <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet</h2>
-        <p className="text-sm text-on-surface-variant">Connect your wallet to access compute sessions.</p>
+        <p className="text-sm text-on-surface-variant">Connect your wallet to access execute.</p>
       </div>
     );
   }
@@ -240,7 +240,7 @@ export function ComputeSession() {
       <div className="sticky top-0 z-30 flex h-12 items-center border-b border-surface-glass bg-surface/50 px-8 backdrop-blur-xl">
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-primary" />
-          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-outline">Compute Sessions</span>
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-outline">Execute</span>
           <span className="font-mono text-sm text-on-surface">{jobs.length}</span>
         </div>
         <div className="ml-6 flex items-center gap-2">
@@ -524,7 +524,7 @@ export function ComputeSession() {
             {/* Execution Guide */}
             <div className="mt-6 rounded-xl border border-outline-variant/10 bg-surface-container-low p-4">
               <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-on-surface">
-                <Cpu className="h-4 w-4 text-primary" /> How Compute Sessions Work
+                <Cpu className="h-4 w-4 text-primary" /> How Execute Work
               </h3>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div className="rounded-lg bg-surface-container p-3">

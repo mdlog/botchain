@@ -427,7 +427,7 @@ export function NodeManagement() {
       <div className="z-10 flex w-full flex-col items-start justify-between gap-4 lg:flex-row lg:items-end">
         <div className="flex max-w-2xl flex-col gap-2">
           <h1 className="text-base font-bold tracking-tight text-on-background">
-            Node Fleet <span className="font-light text-on-surface-variant">Management</span>
+            My Nodes
           </h1>
           <p className="mt-1 text-xs text-on-surface-variant">
             Register compute hardware on-chain, manage node status, and verify GPU clusters.
