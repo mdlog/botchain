@@ -224,3 +224,4 @@ echo "  node cli.js info 1      # node details"
 echo ""
 echo -e "${Y}⚠️  Keep $INSTALL_DIR/.env private. Never share or commit it.${N}"
 echo ""
+
