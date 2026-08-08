@@ -206,20 +206,61 @@ ok "Binary: $BINARY ($(du -h "$BINARY" | cut -f1))"
 # ── Step 7: Start tunnel + register agent URL on-chain ──
 step "Step 7/7: Cloudflare Tunnel + Agent URL Registration"
 
-# Check if cloudflared is installed
-if ! command -v cloudflared &>/dev/null; then
-  info "Installing cloudflared..."
+# ── Detect or install cloudflared ─────────────────────
+install_cloudflared() {
+  info "cloudflared not found — installing..."
+
+  # Linux: Cloudflare official deb repo (most reliable)
   if command -v apt-get &>/dev/null; then
-    sudo apt-get install -y cloudflared 2>/dev/null || curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared
-  elif command -v brew &>/dev/null; then
-    brew install cloudflared
-  else
-    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared
+    info "Adding Cloudflare apt repo..."
+    sudo mkdir -p /usr/share/keyrings 2>/dev/null
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null 2>&1
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs 2>/dev/null || echo jammy) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null 2>&1
+    sudo apt-get update -qq 2>/dev/null
+    sudo apt-get install -y cloudflared 2>/dev/null && return 0
+    warn "apt install failed, trying direct binary..."
   fi
+
+  # macOS: Homebrew
+  if command -v brew &>/dev/null; then
+    info "Installing via Homebrew..."
+    brew install cloudflared 2>/dev/null && return 0
+    warn "brew install failed, trying direct binary..."
+  fi
+
+  # Universal fallback: direct binary download
+  local ARCH
+  case "$(uname -m)" in
+    x86_64)  ARCH="linux-amd64" ;;
+    aarch64) ARCH="linux-arm64" ;;
+    armv7l)  ARCH="linux-arm" ;;
+    *)       ARCH="linux-amd64" ;;
+  esac
+
+  local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-${ARCH}"
+  info "Downloading: ${URL}"
+  sudo curl -fsSL "$URL" -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared && return 0
+
+  err "Failed to install cloudflared."
+  err "Manual: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"
+  return 1
+}
+
+# Detect cloudflared
+if command -v cloudflared &>/dev/null && cloudflared --version &>/dev/null 2>&1; then
+  ok "cloudflared detected: $(cloudflared --version 2>&1 | head -1)"
+else
+  # Binary exists but broken? Remove and reinstall
+  if command -v cloudflared &>/dev/null; then
+    warn "cloudflared binary present but broken — reinstalling..."
+    sudo rm -f "$(command -v cloudflared)" 2>/dev/null
+  fi
+  install_cloudflared || true
 fi
 
-if command -v cloudflared &>/dev/null; then
-  ok "cloudflared found: $(cloudflared --version 2>&1 | head -1)"
+# Verify after install
+if command -v cloudflared &>/dev/null && cloudflared --version &>/dev/null 2>&1; then
+  ok "cloudflared ready: $(cloudflared --version 2>&1 | head -1)"
 
   # Start compute agent in background first
   info "Starting compute agent in background..."
