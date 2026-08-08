@@ -5,7 +5,13 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | PROVIDER_PRIVATE_KEY=0x... bash
+#
+# Security:
+#   - Private key is read silently (not echoed)
+#   - Written directly to .env with chmod 600
+#   - Never passed as env var or CLI argument
+#   - Unset from shell after writing to .env
+#   - Node reads key from .env via dotenv (not from process env)
 #
 set -euo pipefail
 
@@ -18,14 +24,12 @@ err()   { echo -e "${R}❌ $1${N}"; }
 step()  { echo -e "\n${B}━━━ $1 ━━━${N}"; }
 
 # ── Banner ─────────────────────────────────────────────
-echo -e "${C}"
 cat << 'BANNER'
 ╔══════════════════════════════════════════════╗
 ║  ComputeRWA Provider Setup                   ║
 ║  BOT Chain DePIN — Node Registration         ║
 ╚══════════════════════════════════════════════╝
 BANNER
-echo -e "${N}"
 
 # ── Config ─────────────────────────────────────────────
 REPO_RAW="https://raw.githubusercontent.com/mdlog/botchain/main"
@@ -36,25 +40,70 @@ REGISTRY_ADDR="0xc612111b8648B73ED23CF19f400488566af76Ddc"
 MARKETPLACE_ADDR="0x7278045051843BbdD7786B493de0681904075f02"
 ORACLE_ADDR="0x8674305cb18521E75C01D0162d209ea22767fc33"
 
-# ── Step 0: Check private key ──────────────────────────
-step "Step 0/5: Configuration"
+# ── Helper: securely read private key ──────────────────
+# Reads key silently, validates, writes to .env, then unsets from shell
+read_and_store_key() {
+  # If key provided via env var (piped), use it but unset immediately after storing
+  if [[ -n "${PROVIDER_PRIVATE_KEY:-}" ]]; then
+    KEY="$PROVIDER_PRIVATE_KEY"
+    unset PROVIDER_PRIVATE_KEY
+  else
+    echo ""
+    echo -e "${B}Enter your provider private key (input hidden):${N}"
+    # Silent read — key is NOT echoed to terminal
+    read -rs KEY
+    echo ""
+    if [[ -z "$KEY" ]]; then
+      err "Private key required."
+      exit 1
+    fi
+  fi
 
-if [[ -z "${PROVIDER_PRIVATE_KEY:-}" ]]; then
-  echo ""
-  read -rp "$(echo -e ${B}'Enter your provider private key (0x...): '${N})" PROVIDER_PRIVATE_KEY
-  if [[ -z "$PROVIDER_PRIVATE_KEY" ]]; then
-    err "Private key required."
+  # Validate format
+  if [[ ! "$KEY" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+    err "Invalid private key format. Must be 0x + 64 hex chars."
+    # Clear from memory
+    KEY=""
     exit 1
   fi
-fi
 
-# Validate format
-if [[ ! "$PROVIDER_PRIVATE_KEY" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
-  err "Invalid private key format. Must be 0x + 64 hex chars."
+  # Write to .env with restrictive permissions FIRST
+  # Create .env with chmod 600 before writing content
+  touch .env
+  chmod 600 .env
+
+  # Write using printf (no echo — avoids key in process list)
+  {
+    printf 'PROVIDER_PRIVATE_KEY=%s\n' "$KEY"
+    printf 'RPC_URL=%s\n' "$RPC_URL"
+    printf 'CHAIN_ID=%s\n' "$CHAIN_ID"
+    printf 'REGISTRY_ADDR=%s\n' "$REGISTRY_ADDR"
+    printf 'MARKETPLACE_ADDR=%s\n' "$MARKETPLACE_ADDR"
+    printf 'ORACLE_ADDR=%s\n' "$ORACLE_ADDR"
+  } > .env
+
+  # Clear key from shell variable — only .env has it now
+  KEY=""
+
+  ok "Private key stored securely in .env (chmod 600)"
+}
+
+# ── Step 0: Configuration ──────────────────────────────
+step "Step 0/5: Configuration"
+
+# Prepare install directory
+info "Install directory: $INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+
+# Read and store private key securely
+read_and_store_key
+
+# Verify .env was written correctly (check key exists without printing it)
+if ! grep -q '^PROVIDER_PRIVATE_KEY=0x[0-9a-fA-F]\{64\}$' .env 2>/dev/null; then
+  err "Failed to store private key in .env"
   exit 1
 fi
-
-ok "Private key received"
 
 # ── Step 1: Check Node.js ──────────────────────────────
 step "Step 1/5: Check Dependencies"
@@ -88,24 +137,11 @@ fi
 # ── Step 2: Download CLI files ─────────────────────────
 step "Step 2/5: Download CLI"
 
-mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR"
-
-info "Downloading to $INSTALL_DIR..."
+info "Downloading CLI files..."
 
 # Download cli.js and package.json from GitHub raw
 curl -fsSL "$REPO_RAW/cli/cli.js" -o cli.js
 curl -fsSL "$REPO_RAW/cli/package.json" -o package.json
-
-# Create .env
-cat > .env << ENVFILE
-PROVIDER_PRIVATE_KEY=$PROVIDER_PRIVATE_KEY
-RPC_URL=$RPC_URL
-CHAIN_ID=$CHAIN_ID
-REGISTRY_ADDR=$REGISTRY_ADDR
-MARKETPLACE_ADDR=$MARKETPLACE_ADDR
-ORACLE_ADDR=$ORACLE_ADDR
-ENVFILE
 
 ok "CLI files downloaded"
 
@@ -116,12 +152,11 @@ info "Running npm install..."
 npm install --silent 2>/dev/null
 ok "Dependencies installed"
 
-# ── Step 4: Run setup (detect + register + activate + verify) ──
+# ── Step 4: Run setup (detect → register → activate → verify) ──
 step "Step 4/5: Node Setup (detect → register → activate → verify)"
 
-#export PROVIDER_PRIVATE_KEY
-#export RPC_URL CHAIN_ID REGISTRY_ADDR MARKETPLACE_ADDR ORACLE_ADDR
-
+# Key is read from .env by dotenv — NOT from process environment
+# This prevents key from appearing in /proc/<pid>/environ
 node cli.js setup || { err "Setup failed!"; exit 1; }
 
 # ── Step 5: Optional — start compute agent ─────────────
@@ -133,13 +168,13 @@ read -rp "$(echo -e ${B}'Start compute agent now? [y/N]: '${N})" START_AGENT
 if [[ "${START_AGENT:-}" =~ ^[Yy]$ ]]; then
   info "Downloading compute agent..."
 
-  # Download compute agent files
   mkdir -p "$INSTALL_DIR/compute-agent"
   curl -fsSL "$REPO_RAW/compute-agent/server.js" -o "$INSTALL_DIR/compute-agent/server.js"
   curl -fsSL "$REPO_RAW/compute-agent/package.json" -o "$INSTALL_DIR/compute-agent/package.json"
 
-  # Copy .env
-  cp "$INSTALL_DIR/.env" "$INSTALL_DIR/compute-agent/.env"
+  # Copy .env with same restrictive permissions
+  cp .env "$INSTALL_DIR/compute-agent/.env"
+  chmod 600 "$INSTALL_DIR/compute-agent/.env"
 
   cd "$INSTALL_DIR/compute-agent"
   npm install --silent 2>/dev/null
@@ -152,18 +187,24 @@ else
   echo ""
   echo -e "${G}Setup complete!${N}"
   echo ""
-  echo "Compute agent can be started later:"
+  echo "Your private key is stored at:"
+  echo "  $INSTALL_DIR/.env  (chmod 600)"
+  echo ""
+  echo "Compute agent (later):"
   echo "  cd $INSTALL_DIR"
+  echo "  mkdir -p compute-agent"
   echo "  curl -fsSL $REPO_RAW/compute-agent/server.js -o compute-agent/server.js"
   echo "  curl -fsSL $REPO_RAW/compute-agent/package.json -o compute-agent/package.json"
-  echo "  cp .env compute-agent/.env"
+  echo "  cp .env compute-agent/.env && chmod 600 compute-agent/.env"
   echo "  cd compute-agent && npm install && node server.js"
   echo ""
-  echo "Other commands:"
+  echo "CLI commands:"
   echo "  cd $INSTALL_DIR"
   echo "  node cli.js list        # list all nodes"
   echo "  node cli.js mine        # your nodes"
   echo "  node cli.js heartbeat 1 # send heartbeat"
   echo "  node cli.js balance     # check revenue"
+  echo ""
+  echo -e "${Y}⚠️  Keep $INSTALL_DIR/.env private. Never share or commit it.${N}"
   echo ""
 fi
