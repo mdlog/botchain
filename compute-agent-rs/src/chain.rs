@@ -116,9 +116,9 @@ impl ChainClient {
             .unwrap_or_else(|_| "https://rpc.bohr.life".to_string());
 
         let marketplace_addr = env::var("MARKETPLACE_ADDR")
-            .unwrap_or_else(|_| "0x7278045051843BbdD7786B493de0681904075f02".to_string());
+            .unwrap_or_else(|_| "0xb873AB623A0387974b6DC8a95da503deAB1313a7".to_string());
         let registry_addr = env::var("REGISTRY_ADDR")
-            .unwrap_or_else(|_| "0xc612111b8648B73ED23CF19f400488566af76Ddc".to_string());
+            .unwrap_or_else(|_| "0x1476b38108ca44A550b780dc7223a48488b83309".to_string());
 
         let mkt = Address::from_str(&marketplace_addr)
             .context("Invalid MARKETPLACE_ADDR")?;

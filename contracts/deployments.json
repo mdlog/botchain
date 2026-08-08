@@ -1,11 +1,11 @@
 {
   "network": "968",
   "contracts": {
-    "ComputeRegistry": "0xc612111b8648B73ED23CF19f400488566af76Ddc",
-    "PriceOracle": "0x8674305cb18521E75C01D0162d209ea22767fc33",
-    "ComputeMarketplace": "0x7278045051843BbdD7786B493de0681904075f02",
-    "ComputeIndexToken": "0x0D3FeE7457066662C1a30C3DAC7f18b907Feab1b"
+    "ComputeRegistry": "0x1476b38108ca44A550b780dc7223a48488b83309",
+    "PriceOracle": "0xe106ba1671d6c0C7DDfEc7386d426CA800339D42",
+    "ComputeMarketplace": "0xb873AB623A0387974b6DC8a95da503deAB1313a7",
+    "ComputeIndexToken": "0x77729F63dAC6e27065641aA6036bD1De6674290E"
   },
-  "deployedAt": "2026-08-07T08:02:00.000Z",
-  "changes": "v3: proportional payment (actual time only), consumer refund for unused time"
+  "deployedAt": "2026-08-08T01:39:00.000Z",
+  "changes": "v4: hash-based node IDs (keccak256 instead of sequential)"
 }

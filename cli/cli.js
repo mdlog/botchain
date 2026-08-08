@@ -25,9 +25,9 @@ import os from 'os';
 const PRIVATE_KEY = process.env.PROVIDER_PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://rpc.bohr.life';
 const CHAIN_ID = Number(process.env.CHAIN_ID || 968);
-const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0xc612111b8648B73ED23CF19f400488566af76Ddc';
-const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0x7278045051843BbdD7786B493de0681904075f02';
-const ORACLE_ADDR = process.env.ORACLE_ADDR || '0x8674305cb18521E75C01D0162d209ea22767fc33';
+const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0x1476b38108ca44A550b780dc7223a48488b83309';
+const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0xb873AB623A0387974b6DC8a95da503deAB1313a7';
+const ORACLE_ADDR = process.env.ORACLE_ADDR || '0xe106ba1671d6c0C7DDfEc7386d426CA800339D42';
 
 const chain = {
   id: CHAIN_ID,
@@ -44,7 +44,7 @@ const REGISTRY_ABI = [
   { name: 'getNode', type: 'function', stateMutability: 'view', inputs: [{ name: 'nodeId', type: 'uint256' }], outputs: [{ name: 'node', type: 'tuple', components: [ { name: 'provider', type: 'address' }, { name: 'specs', type: 'tuple', components: [ { name: 'model', type: 'string' }, { name: 'vramGB', type: 'uint16' }, { name: 'tflops', type: 'uint16' }, { name: 'region', type: 'string' } ] }, { name: 'status', type: 'uint8' }, { name: 'totalRevenue', type: 'uint96' }, { name: 'registeredAt', type: 'uint64' }, { name: 'lastHeartbeat', type: 'uint64' }, { name: 'verified', type: 'bool' } ] }] },
   { name: 'getProviderNodes', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'nodeIds', type: 'uint256[]' }] },
   { name: 'getProviderRevenue', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'total', type: 'uint96' }] },
-  { name: 'nextNodeId', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'nodeCount', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
   { name: 'totalActiveNodes', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
 ];
 
@@ -117,7 +117,7 @@ async function cmdSetup(args) {
     for (const id of existingIds) {
       const n = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'getNode', args: [id] });
       const st = STATUS_NAMES[Number(n.status)];
-      console.log('   → Node #' + Number(id) + ': ' + n.specs.model + ' / ' + st + ' / ' + (n.verified ? '✅' : '❌'));
+      console.log('   → node-id:' + id.toString() + ': ' + n.specs.model + ' / ' + st + ' / ' + (n.verified ? '✅' : '❌'));
     }
     console.log('');
     // If any existing node is already Active+Verified, skip setup
@@ -155,26 +155,27 @@ async function cmdSetup(args) {
   console.log('   Tx: ' + rh);
   const rr = await publicClient.waitForTransactionReceipt({ hash: rh });
   if (rr.status !== 'success') { console.log('   ❌ Register failed!'); process.exit(1); }
-  const ni = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'nextNodeId' });
-  const nodeId = Number(ni) - 1;
-  console.log('   ✅ Node #' + nodeId + ' registered!');
+  // Get newly registered node ID from getProviderNodes (last element)
+  const myNodes = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'getProviderNodes', args: [account.address] });
+  const nodeIdStr = myNodes[myNodes.length - 1].toString();
+  console.log('   ✅ node-id:' + nodeIdStr + ' registered!');
 
   console.log('\n━━━ Step 3/4: Activate Node ━━━');
-  const ah = await walletClient.writeContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'updateStatus', args: [BigInt(nodeId), 1], account, chain });
+  const ah = await walletClient.writeContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'updateStatus', args: [BigInt(nodeIdStr), 1], account, chain });
   console.log('   Tx: ' + ah);
   const ar = await publicClient.waitForTransactionReceipt({ hash: ah });
-  if (ar.status === 'success') console.log('   ✅ Node #' + nodeId + ' is Active!'); else { console.log('   ❌ Activate failed!'); process.exit(1); }
+  if (ar.status === 'success') console.log('   ✅ node-id:' + nodeIdStr + ' is Active!'); else { console.log('   ❌ Activate failed!'); process.exit(1); }
 
   console.log('\n━━━ Step 4/4: Verify Node ━━━');
-  const vh = await walletClient.writeContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'verifyNode', args: [BigInt(nodeId)], account, chain });
+  const vh = await walletClient.writeContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'verifyNode', args: [BigInt(nodeIdStr)], account, chain });
   console.log('   Tx: ' + vh);
   const vr = await publicClient.waitForTransactionReceipt({ hash: vh });
-  if (vr.status === 'success') console.log('   ✅ Node #' + nodeId + ' verified!'); else console.log('   ❌ Verify failed!');
+  if (vr.status === 'success') console.log('   ✅ node-id:' + nodeIdStr + ' verified!'); else console.log('   ❌ Verify failed!');
 
   console.log('\n╔══════════════════════════════════════════════╗');
-  console.log('║  ✅ SETUP COMPLETE — Node #' + String(nodeId).padEnd(2) + ' ready!           ║');
+  console.log('║  ✅ SETUP COMPLETE — node ready!              ║');
   console.log('╠══════════════════════════════════════════════╣');
-  console.log('║  Node ID:   ' + String(nodeId).padEnd(33) + '║');
+  console.log('║  Node ID:   ' + (nodeIdStr||'unknown').slice(0,33).padEnd(33) + '║');
   console.log('║  Model:     ' + model.slice(0,33).padEnd(33) + '║');
   console.log('║  Status:    ' + 'Active'.padEnd(33) + '║');
   console.log('║  Verified:  ' + 'Yes'.padEnd(33) + '║');
@@ -182,8 +183,8 @@ async function cmdSetup(args) {
   console.log('╚══════════════════════════════════════════════╝');
   console.log('\nNext steps:');
   console.log('  Start compute agent:  cd ../compute-agent && npm start');
-  console.log('  Send heartbeat:       node cli.js heartbeat ' + nodeId);
-  console.log('  View node info:       node cli.js info ' + nodeId + '\n');
+  console.log('  Send heartbeat:       node cli.js heartbeat ' + (nodeIdStr||''));
+  console.log('  View node info:       node cli.js info ' + (nodeIdStr||'') + '\n');
 }
 
 async function cmdDetect() {
@@ -211,59 +212,54 @@ async function cmdRegister(args) {
   const hash = await walletClient.writeContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'registerNode', args: [model,vramGB,tflops,region], account, chain });
   console.log('   Tx: ' + hash);
   const rc = await publicClient.waitForTransactionReceipt({ hash });
-  if (rc.status==='success') { const ni=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nextNodeId'}); const id=Number(ni)-1; console.log('\n✅ Node #' + id + ' registered!\n   Activate: node cli.js activate ' + id + '\n   Verify:   node cli.js verify ' + id); }
+  if (rc.status==='success') { const ni=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nodeCount'}); const id=Number(ni)-1; console.log('\n✅ Node #' + id + ' registered!\n   Activate: node cli.js activate ' + id + '\n   Verify:   node cli.js verify ' + id); }
   else { console.log('\n❌ Failed!'); process.exit(1); }
 }
 
 async function cmdActivate(args) {
-  const id=parseInt(args[0]); if(!id){console.error('Usage: node cli.js activate <nodeId>');process.exit(1);}
+  const id=args[0]; if(!id){console.error('Usage: node cli.js activate <nodeId>');process.exit(1);}
   const {walletClient,account}=getWallet();
-  console.log('🟢 Activating node #'+id+'…');
+  console.log('🟢 Activating node-id:'+id+'…');
   const h=await walletClient.writeContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'updateStatus',args:[BigInt(id),1],account,chain});
   const r=await publicClient.waitForTransactionReceipt({hash:h});
-  console.log(r.status==='success'?'✅ Node #'+id+' is Active':'❌ Failed');
+  console.log(r.status==='success'?'✅ node-id:'+id+' is Active':'❌ Failed');
 }
 
 async function cmdDeactivate(args) {
-  const id=parseInt(args[0]); if(!id){console.error('Usage: node cli.js deactivate <nodeId>');process.exit(1);}
+  const id=args[0]; if(!id){console.error('Usage: node cli.js deactivate <nodeId>');process.exit(1);}
   const {walletClient,account}=getWallet();
-  console.log('🔴 Deactivating node #'+id+'…');
+  console.log('🔴 Deactivating node-id:'+id+'…');
   const h=await walletClient.writeContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'updateStatus',args:[BigInt(id),0],account,chain});
   const r=await publicClient.waitForTransactionReceipt({hash:h});
-  console.log(r.status==='success'?'✅ Node #'+id+' is Inactive':'❌ Failed');
+  console.log(r.status==='success'?'✅ node-id:'+id+' is Inactive':'❌ Failed');
 }
 
 async function cmdVerify(args) {
-  const id=parseInt(args[0]); if(!id){console.error('Usage: node cli.js verify <nodeId>');process.exit(1);}
+  const id=args[0]; if(!id){console.error('Usage: node cli.js verify <nodeId>');process.exit(1);}
   const {walletClient,account}=getWallet();
-  console.log('✔️  Verifying node #'+id+'…');
+  console.log('✔️  Verifying node-id:'+id+'…');
   const h=await walletClient.writeContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'verifyNode',args:[BigInt(id)],account,chain});
   const r=await publicClient.waitForTransactionReceipt({hash:h});
-  console.log(r.status==='success'?'✅ Node #'+id+' verified':'❌ Failed');
+  console.log(r.status==='success'?'✅ node-id:'+id+' verified':'❌ Failed');
 }
 
 async function cmdHeartbeat(args) {
-  const id=parseInt(args[0]); if(!id){console.error('Usage: node cli.js heartbeat <nodeId>');process.exit(1);}
+  const id=args[0]; if(!id){console.error('Usage: node cli.js heartbeat <nodeId>');process.exit(1);}
   const {walletClient,account}=getWallet();
-  console.log('💓 Heartbeat node #'+id+'…');
+  console.log('💓 Heartbeat node-id:'+id+'…');
   const h=await walletClient.writeContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'heartbeat',args:[BigInt(id)],account,chain});
   const r=await publicClient.waitForTransactionReceipt({hash:h});
-  console.log(r.status==='success'?'✅ Heartbeat sent for #'+id:'❌ Failed');
+  console.log(r.status==='success'?'✅ Heartbeat sent for node-id:'+id:'❌ Failed');
 }
 
 async function cmdList() {
-  const ni=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nextNodeId'});
+  const nc=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nodeCount'});
   const ta=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'totalActiveNodes'});
-  const total=Number(ni)-1;
-  console.log('\n📋 All Nodes ('+total+' total, '+Number(ta)+' active)\n');
-  console.log('ID    Provider       Model                  VRAM    Status     Verified  Revenue        Heartbeat');
-  console.log('───── ────────────── ────────────────────── ─────── ────────── ───────── ────────────── ────────────');
-  for(let i=1;i<=total;i++){
-    try{const n=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'getNode',args:[BigInt(i)]});
-    console.log(String(i).padEnd(5)+' '+shortAddr(n.provider).padEnd(14)+' '+n.specs.model.slice(0,22).padEnd(22)+' '+String(Number(n.specs.vramGB)).padEnd(7)+' '+STATUS_NAMES[Number(n.status)].padEnd(10)+' '+(n.verified?'✅':'❌').padEnd(9)+' '+formatEther(n.totalRevenue).padEnd(14)+' '+timeAgo(n.lastHeartbeat));
-    }catch{console.log(String(i).padEnd(5)+' — error');}
-  }
-  console.log('');
+  console.log('\n📊 Network Stats\n');
+  console.log('  Total nodes:  '+Number(nc));
+  console.log('  Active nodes: '+Number(ta));
+  console.log('\n  Use "node cli.js mine" to see your nodes.');
+  console.log('  Use "node cli.js info <nodeId>" for node details.\n');
 }
 
 async function cmdMine() {
@@ -271,18 +267,19 @@ async function cmdMine() {
   const ids=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'getProviderNodes',args:[account.address]});
   if(ids.length===0){console.log('\n📭 No nodes. Run: node cli.js setup\n');return;}
   console.log('\n📋 Your Nodes ('+ids.length+')\n');
-  for(const id of ids) await printNode(Number(id));
+  for(const id of ids) await printNode(id.toString());
 }
 
 async function cmdInfo(args) {
-  const id=parseInt(args[0]); if(!id){console.error('Usage: node cli.js info <nodeId>');process.exit(1);}
-  await printNode(id);
+  const id=args[0]; if(!id){console.error('Usage: node cli.js info <nodeId>');process.exit(1);}
+  await printNode(id.toString());
 }
 
 async function printNode(nodeId) {
+  const nodeIdStr = String(nodeId);
   try{
     const n=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'getNode',args:[BigInt(nodeId)]});
-    console.log('┌─ Node #'+nodeId+' '+ '─'.repeat(30));
+    console.log('┌─ node-id:'+nodeId+' '+ '─'.repeat(25));
     console.log('│ Provider:  '+n.provider);
     console.log('│ Model:     '+n.specs.model);
     console.log('│ VRAM:      '+Number(n.specs.vramGB)+' GB');
@@ -297,7 +294,7 @@ async function printNode(nodeId) {
     if(!n.verified) console.log('   ⚠️  Verify: node cli.js verify '+nodeId);
     if(Number(n.status)===0) console.log('   ⚠️  Activate: node cli.js activate '+nodeId);
     console.log('');
-  }catch(e){console.log('❌ Error reading node #'+nodeId);}
+  }catch(e){console.log('❌ Error reading node-id:'+nodeId);}
 }
 
 async function cmdBalance() {
@@ -312,10 +309,10 @@ async function cmdBalance() {
 async function cmdStatus() {
   console.log('\n🌐 '+chain.name+' (Chain ID '+chain.id+')');
   console.log('   RPC: '+RPC_URL+'\n');
-  const ni=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nextNodeId'});
+  const nc=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'nodeCount'});
   const ta=await publicClient.readContract({address:REGISTRY_ADDR,abi:REGISTRY_ABI,functionName:'totalActiveNodes'});
   console.log('📊 Registry: '+REGISTRY_ADDR);
-  console.log('   Total: '+(Number(ni)-1)+' | Active: '+Number(ta));
+  console.log('   Total: '+Number(nc)+' | Active: '+Number(ta));
   if(PRIVATE_KEY){const {account}=getWallet();const bal=await publicClient.getBalance({address:account.address});console.log('\n👤 '+account.address);console.log('   Balance: '+formatEther(bal)+' DGRAM');}
   console.log('');
 }

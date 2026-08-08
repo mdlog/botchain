@@ -7,6 +7,9 @@ pragma solidity ^0.8.24;
  *         Stores hardware specs, status, and provider info.
  *         This is the RWA attestation layer — each registered node
  *         represents a real physical compute asset.
+ *
+ *         Node IDs are hash-based uint256 (unique per provider+hardware+time),
+ *         not sequential integers. Format: node-id:<uint256 hash>
  */
 contract ComputeRegistry {
     // ── Types ──────────────────────────────────────────────
@@ -37,7 +40,7 @@ contract ComputeRegistry {
     // ── Storage ────────────────────────────────────────────
     mapping(uint256 => ComputeNode) public nodes;
     mapping(address => uint256[]) public providerNodes;
-    uint256 public nextNodeId = 1;
+    uint256 public nodeCount;    // total registered nodes (for stats)
     address public owner;
     uint256 public totalActiveNodes;
 
@@ -59,7 +62,7 @@ contract ComputeRegistry {
     }
 
     modifier nodeExists(uint256 nodeId) {
-        require(nodeId > 0 && nodeId < nextNodeId, "Node does not exist");
+        require(nodes[nodeId].provider != address(0), "Node does not exist");
         _;
     }
 
@@ -77,6 +80,8 @@ contract ComputeRegistry {
 
     /**
      * @notice Register a new compute node. Caller becomes the provider.
+     *         Node ID is derived from keccak256(provider + hardware + time + block)
+     *         ensuring uniqueness across all registrations.
      * @param model GPU model name
      * @param vramGB VRAM in GB
      * @param tflops Theoretical TFLOPS
@@ -91,7 +96,19 @@ contract ComputeRegistry {
         require(bytes(model).length > 0, "Model required");
         require(vramGB > 0, "VRAM required");
 
-        nodeId = nextNodeId++;
+        // Generate unique node ID from provider + hardware specs + time + block
+        nodeId = uint256(keccak256(abi.encodePacked(
+            msg.sender,
+            model,
+            vramGB,
+            tflops,
+            region,
+            block.timestamp,
+            block.number
+        )));
+
+        require(nodes[nodeId].provider == address(0), "Node already exists");
+
         nodes[nodeId] = ComputeNode({
             provider: msg.sender,
             specs: GpuSpecs(model, vramGB, tflops, region),
@@ -102,6 +119,7 @@ contract ComputeRegistry {
             verified: false
         });
         providerNodes[msg.sender].push(nodeId);
+        nodeCount++;
 
         emit NodeRegistered(nodeId, msg.sender, model, region);
     }
