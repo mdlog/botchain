@@ -71,10 +71,22 @@ function parseArgs(args) { const p = {}; for (let i = 0; i < args.length; i++) {
 
 function estimateTflops(model) { const m = (model||'').toLowerCase(); const map = { 'h100':989,'a100':624,'rtx 5090':105,'rtx 4090':165,'rtx 4080':97,'rtx 4070':48,'rtx 3090':71,'rtx 3080':35,'rtx 3070':21,'rtx 3060':13,'rtx 3050':6,'gtx 1660':14,'gtx 1080':9,'gtx 1070':6.5,'rx 7900':61,'rx 6900':51,'rx 6800':41,'rx 6700':24,'radeon':25 }; for (const [k,v] of Object.entries(map)) { if (m.includes(k)) return v; } return 0; }
 
+// Normalize GPU model name to match PriceOracle entries
+// nvidia-smi returns "NVIDIA GeForce RTX 3060" → oracle expects "NVIDIA RTX 3060"
+function normalizeGpuName(name) {
+  if (!name || name === 'CPU Only') return name;
+  let n = name.trim();
+  // Strip "GeForce" and "Quadro" — oracle uses short form
+  n = n.replace(/GeForce\s+/i, '').replace(/Quadro\s+/i, '');
+  // Strip VRAM suffix: "H100 80GB HBM3" → "NVIDIA H100"
+  n = n.replace(/\s+\d+GB\s+HBM\d+/i, '');
+  return n;
+}
+
 function detectHardware() {
   console.log('🔍 Detecting hardware…\n');
   let gpuModel = 'CPU Only', vramGB = 0, tflops = 0, hasGpu = false;
-  try { const out = execSync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null', { encoding: 'utf8', timeout: 5000 }).trim(); if (out) { const [n,v] = out.split(',').map(s=>s.trim()); gpuModel=n; vramGB=Math.round((parseInt(v)||0)/1024*10)/10; hasGpu=true; tflops=estimateTflops(n); console.log('  GPU:  '+gpuModel+' ('+vramGB+' GB, ~'+tflops+' TFLOPS)'); } } catch {}
+  try { const out = execSync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null', { encoding: 'utf8', timeout: 5000 }).trim(); if (out) { const [n,v] = out.split(',').map(s=>s.trim()); gpuModel=normalizeGpuName(n); vramGB=Math.round((parseInt(v)||0)/1024*10)/10; hasGpu=true; tflops=estimateTflops(n); console.log('  GPU:  '+gpuModel+' ('+vramGB+' GB, ~'+tflops+' TFLOPS)'); } } catch {}
   if (!hasGpu) { try { const out = execSync('rocm-smi --showproductname --csv 2>/dev/null', { encoding: 'utf8', timeout: 5000 }).trim(); if (out && out.includes('Card series')) { for (const l of out.split('\n')) { if (l.includes('Card series')) { const p = l.split(','); if (p.length>=2) { gpuModel=p[1].trim(); hasGpu=true; vramGB=16; tflops=estimateTflops(gpuModel); console.log('  GPU:  '+gpuModel+' (AMD, ~'+vramGB+' GB, ~'+tflops+' TFLOPS)'); break; } } } } } catch {} }
   let cpuModel='Unknown', cpuCores=0;
   try { const ls = execSync('lscpu 2>/dev/null', { encoding:'utf8', timeout:5000 }); const m1=ls.match(/Model name:\s*(.+)/), m2=ls.match(/CPU\(s\):\s*(\d+)/); if(m1) cpuModel=m1[1].trim(); if(m2) cpuCores=parseInt(m2[1]); console.log('  CPU:  '+cpuModel+' ('+cpuCores+' cores)'); } catch { cpuCores=os.cpus().length; cpuModel=os.cpus()[0]?.model||'Unknown'; console.log('  CPU:  '+cpuModel+' ('+cpuCores+' cores)'); }
