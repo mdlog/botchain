@@ -27,6 +27,7 @@ interface NodeListing {
   pricePerHour: bigint;
   confidence: number;
   jobCount: number;
+  completedJobs: number;
 }
 
 const GPU_MODELS = ['NVIDIA H100', 'NVIDIA A100', 'NVIDIA RTX 4090', 'NVIDIA RTX 3090', 'NVIDIA RTX 3060', 'AMD Radeon GPU', 'CPU Only'];
@@ -35,7 +36,7 @@ export function Marketplace() {
   const { address } = useWalletContext();
   const { getPrice, isSupported } = usePriceOracle();
   const { getNode, getNodeCount, getTotalActiveNodes } = useComputeRegistry();
-  const { createJob, getTotalJobs, getTotalVolume, getAllJobCounts } = useComputeMarketplace();
+  const { createJob, getTotalJobs, getTotalVolume, getAllJobCounts, getCompletedJobStats } = useComputeMarketplace();
   const engine = getPricingEngine();
 
   const [loading, setLoading] = useState(true);
@@ -46,6 +47,7 @@ export function Marketplace() {
   const [activeNodes, setActiveNodes] = useState(0n);
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, any>>({});
   const [jobCounts, setJobCounts] = useState<Map<string, number>>(new Map());
+  const [completedStats, setCompletedStats] = useState<{ perNode: Map<string, number>, perType: Map<string, number>, total: number }>({ perNode: new Map(), perType: new Map(), total: 0 });
   const [leasing, setLeasing] = useState<number | null>(null);
 
   // View mode + filters
@@ -126,11 +128,16 @@ export function Marketplace() {
             }
           } catch {}
         }
-        // Fetch job counts per node
-        const jc = await getAllJobCounts();
+        // Fetch job counts + completed job stats per node
+        const [jc, completed] = await Promise.all([
+          getAllJobCounts(),
+          getCompletedJobStats(),
+        ]);
         setJobCounts(jc);
+        setCompletedStats(completed);
         for (const n of nodeListings) {
           n.jobCount = jc.get(n.nodeId.toString()) ?? 0;
+          n.completedJobs = completed.perNode.get(n.nodeId.toString()) ?? 0;
         }
         setListings(nodeListings);
 
@@ -355,8 +362,12 @@ export function Marketplace() {
                     <span className="font-mono text-sm text-on-surface">{node.tflops}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">JOBS DONE</span>
+                    <span className="font-mono text-[10px] font-semibold text-outline-variant">JOBS TOTAL</span>
                     <span className="font-mono text-sm text-on-surface">{node.jobCount}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-mono text-[10px] font-semibold text-outline-variant">COMPLETED</span>
+                    <span className="font-mono text-sm text-compute-active">{node.completedJobs}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-mono text-[10px] font-semibold text-outline-variant">PROVIDER</span>
@@ -418,12 +429,12 @@ export function Marketplace() {
                   {node.vramGB > 0 ? (
                     <>
                       <div className="font-mono text-xs text-on-surface">{node.vramGB} GB VRAM</div>
-                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.jobCount} jobs</div>
+                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.completedJobs}/{node.jobCount} done</div>
                     </>
                   ) : (
                     <>
                       <div className="font-mono text-xs text-secondary-fixed">CPU Only</div>
-                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.jobCount} jobs</div>
+                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.completedJobs}/{node.jobCount} done</div>
                     </>
                   )}
                 </div>

@@ -161,5 +161,68 @@ export function useComputeMarketplace() {
     return counts;
   }, []);
 
-  return { loading, getJob, getTotalJobs, getTotalVolume, getJobCountByNode, getAllJobCounts, createJob, acceptJob, completeJob, cancelJob };
+  const getCompletedJobStats = useCallback(async (): Promise<{ perNode: Map<string, number>, perType: Map<string, number>, total: number }> => {
+    const perNode = new Map<string, number>();
+    const perType = new Map<string, number>();
+    let total = 0;
+    try {
+      // 1. Fetch all JobCreated events → map jobId → { nodeId, jobType }
+      const createdLogs = await publicClient.getLogs({
+        address: CONTRACTS.ComputeMarketplace,
+        event: {
+          type: 'event',
+          name: 'JobCreated',
+          inputs: [
+            { type: 'uint256', name: 'jobId', indexed: true },
+            { type: 'uint64', name: 'nodeId', indexed: true },
+            { type: 'address', name: 'consumer', indexed: true },
+            { type: 'string', name: 'jobType', indexed: false },
+            { type: 'uint64', name: 'durationHours', indexed: false },
+            { type: 'uint256', name: 'pricePerHourWei', indexed: false },
+            { type: 'uint256', name: 'paymentAmount', indexed: false },
+          ],
+        },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      });
+
+      const jobMap = new Map<string, { nodeId: string; jobType: string }>();
+      for (const log of createdLogs) {
+        const jobId = (log.args as any).jobId?.toString() ?? '';
+        const nodeId = (log.args as any).nodeId?.toString() ?? '0';
+        const jobType = (log.args as any).jobType ?? 'Unknown';
+        jobMap.set(jobId, { nodeId, jobType });
+      }
+
+      // 2. Fetch all JobCompleted events → cross-reference with jobMap
+      const completedLogs = await publicClient.getLogs({
+        address: CONTRACTS.ComputeMarketplace,
+        event: {
+          type: 'event',
+          name: 'JobCompleted',
+          inputs: [
+            { type: 'uint256', name: 'jobId', indexed: true },
+            { type: 'uint64', name: 'completedAt', indexed: false },
+            { type: 'uint256', name: 'totalCost', indexed: false },
+            { type: 'uint256', name: 'refund', indexed: false },
+          ],
+        },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      });
+
+      for (const log of completedLogs) {
+        const jobId = (log.args as any).jobId?.toString() ?? '';
+        const info = jobMap.get(jobId);
+        if (info) {
+          perNode.set(info.nodeId, (perNode.get(info.nodeId) ?? 0) + 1);
+          perType.set(info.jobType, (perType.get(info.jobType) ?? 0) + 1);
+          total++;
+        }
+      }
+    } catch {}
+    return { perNode, perType, total };
+  }, []);
+
+  return { loading, getJob, getTotalJobs, getTotalVolume, getJobCountByNode, getAllJobCounts, getCompletedJobStats, createJob, acceptJob, completeJob, cancelJob };
 }

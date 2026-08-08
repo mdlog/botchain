@@ -17,12 +17,13 @@ interface NodeInfo {
   verified: boolean;
   registeredAt: number;
   jobCount: number;
+  completedJobs: number;
 }
 
 export function Dashboard() {
   const { address } = useWalletContext();
   const { getProviderNodes, getNode, getProviderRevenue, getTotalActiveNodes } = useComputeRegistry();
-  const { getTotalJobs, getTotalVolume, getAllJobCounts } = useComputeMarketplace();
+  const { getTotalJobs, getTotalVolume, getAllJobCounts, getCompletedJobStats } = useComputeMarketplace();
   const { getTVL, getTotalSupply, getBalance } = useComputeIndexToken();
 
   const [loading, setLoading] = useState(true);
@@ -35,6 +36,7 @@ export function Dashboard() {
   const [cifSupply, setCifSupply] = useState(0n);
   const [cifBalance, setCifBalance] = useState(0n);
   const [jobCounts, setJobCounts] = useState<Map<string, number>>(new Map());
+  const [completedStats, setCompletedStats] = useState<{ perNode: Map<string, number>, total: number }>({ perNode: new Map(), total: 0 });
 
   useEffect(() => {
     async function loadData() {
@@ -62,9 +64,13 @@ export function Dashboard() {
           setTotalRevenue(revenue);
           setCifBalance(bal);
 
-          // Fetch all job counts
-          const jc = await getAllJobCounts();
+          // Fetch all job counts + completed stats
+          const [jc, completed] = await Promise.all([
+            getAllJobCounts(),
+            getCompletedJobStats(),
+          ]);
           setJobCounts(jc);
+          setCompletedStats({ perNode: completed.perNode, total: completed.total });
 
           const nodeDetails: NodeInfo[] = [];
           for (const id of nodeIds.slice(0, 10)) {
@@ -82,6 +88,7 @@ export function Dashboard() {
                   verified: node.verified,
                   registeredAt: Number(node.registeredAt),
                   jobCount: jc.get(id.toString()) ?? 0,
+                  completedJobs: completed.perNode.get(id.toString()) ?? 0,
                 });
               }
             } catch {}
@@ -162,10 +169,14 @@ export function Dashboard() {
               </div>
 
               {/* Stats Row */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 <div className="rounded-lg bg-surface-container p-3">
                   <span className="mb-0.5 block font-mono text-[9px] font-semibold uppercase text-outline">TOTAL JOBS</span>
                   <span className="font-mono text-sm text-on-surface">{totalJobs.toString()}</span>
+                </div>
+                <div className="rounded-lg bg-surface-container p-3">
+                  <span className="mb-0.5 block font-mono text-[9px] font-semibold uppercase text-outline">COMPLETED</span>
+                  <span className="font-mono text-sm text-compute-active">{completedStats.total}</span>
                 </div>
                 <div className="rounded-lg bg-surface-container p-3">
                   <span className="mb-0.5 block font-mono text-[9px] font-semibold uppercase text-outline">ACTIVE NODES</span>
@@ -219,7 +230,7 @@ export function Dashboard() {
                             <div className="mt-0.5 flex items-center gap-2 text-[10px] text-outline">
                               <span className="flex items-center gap-0.5"><MapPin className="h-2.5 w-2.5" /> {node.region}</span>
                               <span>{node.vramGB} GB VRAM</span>
-                              <span>{node.jobCount} jobs completed</span>
+                              <span>{node.completedJobs}/{node.jobCount} jobs completed</span>
                               <span>Registered {timeAgo(node.registeredAt)}</span>
                             </div>
                           </div>
@@ -231,7 +242,7 @@ export function Dashboard() {
                           </div>
                           <div className="min-w-[60px] text-right">
                             <span className="mb-0.5 block font-mono text-[9px] font-semibold text-outline">JOBS</span>
-                            <span className="font-mono text-xs font-medium text-on-surface">{node.jobCount}</span>
+                            <span className="font-mono text-xs font-medium text-on-surface">{node.completedJobs}/{node.jobCount}</span>
                           </div>
                           <button className="cursor-pointer flex h-6 w-6 items-center justify-center rounded-full bg-surface text-outline transition-colors hover:bg-surface-bright hover:text-primary">
                             <ChevronRight className="h-3.5 w-3.5" />
