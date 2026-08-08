@@ -22,9 +22,9 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "indexed": true,
@@ -53,9 +53,9 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "indexed": false,
@@ -72,9 +72,9 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "NodeVerified",
@@ -85,28 +85,9 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "address",
-        "name": "previousOwner",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "newOwner",
-        "type": "address"
-      }
-    ],
-    "name": "OwnershipTransferred",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "indexed": false,
@@ -121,9 +102,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "internalType": "uint96",
@@ -139,9 +120,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "getNode",
@@ -225,9 +206,9 @@
     "name": "getProviderNodes",
     "outputs": [
       {
-        "internalType": "uint256[]",
+        "internalType": "uint64[]",
         "name": "",
-        "type": "uint256[]"
+        "type": "uint64[]"
       }
     ],
     "stateMutability": "view",
@@ -255,9 +236,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "heartbeat",
@@ -280,12 +261,12 @@
   },
   {
     "inputs": [],
-    "name": "nextNodeId",
+    "name": "nodeCount",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "stateMutability": "view",
@@ -294,9 +275,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "nodes",
@@ -391,9 +372,9 @@
     "name": "providerNodes",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "stateMutability": "view",
@@ -425,9 +406,9 @@
     "name": "registerNode",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "stateMutability": "nonpayable",
@@ -462,9 +443,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "internalType": "enum ComputeRegistry.NodeStatus",
@@ -480,9 +461,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "verifyNode",

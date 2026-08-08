@@ -95,9 +95,9 @@
       },
       {
         "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "indexed": true,
@@ -175,9 +175,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "internalType": "string",
@@ -224,9 +224,9 @@
       {
         "components": [
           {
-            "internalType": "uint256",
+            "internalType": "uint64",
             "name": "nodeId",
-            "type": "uint256"
+            "type": "uint64"
           },
           {
             "internalType": "address",
@@ -317,9 +317,9 @@
     "name": "jobs",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "internalType": "address",

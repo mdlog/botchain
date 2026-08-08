@@ -32,7 +32,7 @@ const GPU_MODELS = ['NVIDIA H100', 'NVIDIA A100', 'NVIDIA RTX 4090', 'NVIDIA RTX
 export function Marketplace() {
   const { address } = useWalletContext();
   const { getPrice, isSupported } = usePriceOracle();
-  const { getNode, getNextNodeId, getTotalActiveNodes } = useComputeRegistry();
+  const { getNode, getNodeCount, getTotalActiveNodes } = useComputeRegistry();
   const { createJob, getTotalJobs, getTotalVolume } = useComputeMarketplace();
   const engine = getPricingEngine();
 

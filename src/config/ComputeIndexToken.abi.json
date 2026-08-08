@@ -51,9 +51,9 @@
       },
       {
         "indexed": true,
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "indexed": false,
@@ -204,9 +204,9 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       }
     ],
     "name": "depositRevenue",
@@ -236,9 +236,9 @@
     "name": "deposits",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "uint64",
         "name": "nodeId",
-        "type": "uint256"
+        "type": "uint64"
       },
       {
         "internalType": "uint256",
@@ -291,9 +291,9 @@
       {
         "components": [
           {
-            "internalType": "uint256",
+            "internalType": "uint64",
             "name": "nodeId",
-            "type": "uint256"
+            "type": "uint64"
           },
           {
             "internalType": "uint256",

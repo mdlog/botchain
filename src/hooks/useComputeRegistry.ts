@@ -50,11 +50,11 @@ export function useComputeRegistry() {
     return data as bigint;
   }, []);
 
-  const getNextNodeId = useCallback(async () => {
+  const getNodeCount = useCallback(async () => {
     const data = await publicClient.readContract({
       address: CONTRACTS.ComputeRegistry,
       abi: ABIS.ComputeRegistry as any,
-      functionName: 'nextNodeId',
+      functionName: 'nodeCount',
     } as any);
     return data as bigint;
   }, []);
@@ -118,7 +118,7 @@ export function useComputeRegistry() {
     getProviderNodes,
     getProviderRevenue,
     getTotalActiveNodes,
-    getNextNodeId,
+    getNodeCount,
     registerNode,
     updateNodeStatus,
     verifyNode,
