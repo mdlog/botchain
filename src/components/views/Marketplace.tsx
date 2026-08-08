@@ -3,6 +3,7 @@ import { Star, Cpu, MapPin, Grid3x3, List, ShieldCheck, SlidersHorizontal, Gpu }
 import { useWalletContext } from '@/context/WalletContext';
 import { usePriceOracle } from '@/hooks/usePriceOracle';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
+import { publicClient, CONTRACTS } from '@/config/chain';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
 import { formatBOT, formatBOTCompact, formatAddress, timeAgo } from '@/lib/format';
 import { getPricingEngine } from '@/lib/pricing';
@@ -84,14 +85,32 @@ export function Marketplace() {
         }
         setPrices(priceInfos);
 
+        // Fetch all NodeRegistered events to discover hash-based node IDs
+        const logs = await publicClient.getLogs({
+          address: CONTRACTS.ComputeRegistry,
+          event: {
+            type: 'event',
+            name: 'NodeRegistered',
+            inputs: [
+              { type: 'uint64', name: 'nodeId', indexed: true },
+              { type: 'address', name: 'provider', indexed: true },
+              { type: 'string', name: 'model', indexed: false },
+              { type: 'string', name: 'region', indexed: false },
+            ],
+          },
+          fromBlock: 0n,
+          toBlock: 'latest',
+        });
+
         const nodeListings: NodeListing[] = [];
-        for (let i = 1; i <= 20; i++) {
+        for (const log of logs) {
           try {
-            const node = await getNode(BigInt(i)) as any;
+            const nodeId = (log.args as any).nodeId;
+            const node = await getNode(nodeId) as any;
             if (node && node.provider !== '0x0000000000000000000000000000000000000000') {
               const priceInfo = priceInfos.find(p => p.model === node.specs?.model);
               nodeListings.push({
-                nodeId: BigInt(i),
+                nodeId: nodeId,
                 provider: node.provider,
                 model: node.specs?.model || 'Unknown',
                 vramGB: Number(node.specs?.vramGB || 0),
@@ -103,7 +122,7 @@ export function Marketplace() {
                 confidence: priceInfo?.confidence || 0,
               });
             }
-          } catch { break; }
+          } catch {}
         }
         setListings(nodeListings);
 
