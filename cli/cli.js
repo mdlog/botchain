@@ -97,6 +97,33 @@ async function cmdSetup(args) {
   console.log('   Balance:  ' + formatEther(balance) + ' DGRAM');
   if (balance === 0n) { console.log('\n❌ No DGRAM for gas. Fund your wallet first.'); process.exit(1); }
 
+  // ── Check existing nodes ─────────────────────────
+  const existingIds = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'getProviderNodes', args: [account.address] });
+  if (existingIds.length > 0) {
+    console.log('\n━━━ Existing Nodes Check ━━━');
+    console.log('   Found ' + existingIds.length + ' existing node(s) for this wallet:');
+    for (const id of existingIds) {
+      const n = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'getNode', args: [id] });
+      const st = STATUS_NAMES[Number(n.status)];
+      console.log('   → Node #' + Number(id) + ': ' + n.specs.model + ' / ' + st + ' / ' + (n.verified ? '✅' : '❌'));
+    }
+    console.log('');
+    // If any existing node is already Active+Verified, skip setup
+    let allReady = true;
+    for (const id of existingIds) {
+      const n = await publicClient.readContract({ address: REGISTRY_ADDR, abi: REGISTRY_ABI, functionName: 'getNode', args: [id] });
+      if (Number(n.status) !== 1 || !n.verified) allReady = false;
+    }
+    if (allReady) {
+      console.log('   ✅ All nodes already Active & Verified. Nothing to do.');
+      console.log('   Run "node cli.js mine" to view your nodes.\n');
+      return;
+    }
+    console.log('   ⚠️  Some nodes need activation or verification.');
+    console.log('   Continue setup to register a NEW node, or fix existing ones manually.\n');
+    // Continue to register a new node
+  }
+
   console.log('\n━━━ Step 1/4: Hardware Detection ━━━');
   let model, vramGB, tflops, region;
   if (flags.model) {
