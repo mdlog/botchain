@@ -24,7 +24,7 @@ sol! {
         enum JobStatus { Pending, Active, Completed, Cancelled, Disputed }
 
         struct ComputeJob {
-            uint256 nodeId;
+            uint64 nodeId;
             address consumer;
             address provider;
             string jobType;
@@ -68,9 +68,9 @@ sol! {
             bool verified;
         }
 
-        function getNode(uint256 nodeId) external view returns (ComputeNode memory);
-        function getProviderNodes(address provider) external view returns (uint256[] memory);
-        function heartbeat(uint256 nodeId) external;
+        function getNode(uint64 nodeId) external view returns (ComputeNode memory);
+        function getProviderNodes(address provider) external view returns (uint64[] memory);
+        function heartbeat(uint64 nodeId) external;
     }
 }
 
@@ -152,7 +152,7 @@ impl ChainClient {
 
         Ok(JobInfo {
             job_id,
-            node_id: job.nodeId.to::<u64>(),
+            node_id: job.nodeId,
             consumer: job.consumer.to_string(),
             provider: job.provider.to_string(),
             job_type: job.jobType.clone(),
@@ -221,11 +221,11 @@ impl ChainClient {
             .call()
             .await
             .context("getProviderNodes failed")?;
-        Ok(nodes.into_iter().map(|n| n.to::<u64>()).collect())
+        Ok(nodes.into_iter().map(|n| n).collect())
     }
 
     pub async fn heartbeat(&self, node_id: u64) -> Result<()> {
-        self.registry.heartbeat(U256::from(node_id))
+        self.registry.heartbeat(node_id)
             .send()
             .await
             .context("heartbeat tx failed")?
