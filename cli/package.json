@@ -1,0 +1,20 @@
+{
+  "name": "computerwa-cli",
+  "version": "1.0.0",
+  "description": "Provider CLI for ComputeRWA — register, activate, verify nodes from terminal",
+  "type": "module",
+  "main": "cli.js",
+  "bin": {
+    "computerwa": "./cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js",
+    "register": "node cli.js register",
+    "list": "node cli.js list",
+    "detect": "node cli.js detect"
+  },
+  "dependencies": {
+    "viem": "^2.55.11",
+    "dotenv": "^17.4.2"
+  }
+}
