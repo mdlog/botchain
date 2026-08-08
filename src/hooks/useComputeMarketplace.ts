@@ -107,5 +107,59 @@ export function useComputeMarketplace() {
     return hash;
   }, []);
 
-  return { loading, getJob, getTotalJobs, getTotalVolume, createJob, acceptJob, completeJob, cancelJob };
+  const getJobCountByNode = useCallback(async (nodeId: bigint): Promise<number> => {
+    try {
+      const logs = await publicClient.getLogs({
+        address: CONTRACTS.ComputeMarketplace,
+        event: {
+          type: 'event',
+          name: 'JobCreated',
+          inputs: [
+            { type: 'uint256', name: 'jobId', indexed: true },
+            { type: 'uint64', name: 'nodeId', indexed: true },
+            { type: 'address', name: 'consumer', indexed: true },
+            { type: 'string', name: 'jobType', indexed: false },
+            { type: 'uint64', name: 'durationHours', indexed: false },
+            { type: 'uint256', name: 'pricePerHourWei', indexed: false },
+            { type: 'uint256', name: 'paymentAmount', indexed: false },
+          ],
+        },
+        args: [undefined, nodeId],
+        fromBlock: 0n,
+        toBlock: 'latest',
+      });
+      return logs.length;
+    } catch { return 0; }
+  }, []);
+
+  const getAllJobCounts = useCallback(async (): Promise<Map<string, number>> => {
+    const counts = new Map<string, number>();
+    try {
+      const logs = await publicClient.getLogs({
+        address: CONTRACTS.ComputeMarketplace,
+        event: {
+          type: 'event',
+          name: 'JobCreated',
+          inputs: [
+            { type: 'uint256', name: 'jobId', indexed: true },
+            { type: 'uint64', name: 'nodeId', indexed: true },
+            { type: 'address', name: 'consumer', indexed: true },
+            { type: 'string', name: 'jobType', indexed: false },
+            { type: 'uint64', name: 'durationHours', indexed: false },
+            { type: 'uint256', name: 'pricePerHourWei', indexed: false },
+            { type: 'uint256', name: 'paymentAmount', indexed: false },
+          ],
+        },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      });
+      for (const log of logs) {
+        const id = (log.args as any).nodeId?.toString() ?? '0';
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    } catch {}
+    return counts;
+  }, []);
+
+  return { loading, getJob, getTotalJobs, getTotalVolume, getJobCountByNode, getAllJobCounts, createJob, acceptJob, completeJob, cancelJob };
 }

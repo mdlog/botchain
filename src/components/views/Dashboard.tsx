@@ -16,12 +16,13 @@ interface NodeInfo {
   totalRevenue: bigint;
   verified: boolean;
   registeredAt: number;
+  jobCount: number;
 }
 
 export function Dashboard() {
   const { address } = useWalletContext();
   const { getProviderNodes, getNode, getProviderRevenue, getTotalActiveNodes } = useComputeRegistry();
-  const { getTotalJobs, getTotalVolume } = useComputeMarketplace();
+  const { getTotalJobs, getTotalVolume, getAllJobCounts } = useComputeMarketplace();
   const { getTVL, getTotalSupply, getBalance } = useComputeIndexToken();
 
   const [loading, setLoading] = useState(true);
@@ -33,6 +34,7 @@ export function Dashboard() {
   const [tvl, setTvl] = useState(0n);
   const [cifSupply, setCifSupply] = useState(0n);
   const [cifBalance, setCifBalance] = useState(0n);
+  const [jobCounts, setJobCounts] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     async function loadData() {
@@ -60,6 +62,10 @@ export function Dashboard() {
           setTotalRevenue(revenue);
           setCifBalance(bal);
 
+          // Fetch all job counts
+          const jc = await getAllJobCounts();
+          setJobCounts(jc);
+
           const nodeDetails: NodeInfo[] = [];
           for (const id of nodeIds.slice(0, 10)) {
             try {
@@ -75,6 +81,7 @@ export function Dashboard() {
                   totalRevenue: node.totalRevenue,
                   verified: node.verified,
                   registeredAt: Number(node.registeredAt),
+                  jobCount: jc.get(id.toString()) ?? 0,
                 });
               }
             } catch {}
@@ -212,6 +219,7 @@ export function Dashboard() {
                             <div className="mt-0.5 flex items-center gap-2 text-[10px] text-outline">
                               <span className="flex items-center gap-0.5"><MapPin className="h-2.5 w-2.5" /> {node.region}</span>
                               <span>{node.vramGB} GB VRAM</span>
+                              <span>{node.jobCount} jobs completed</span>
                               <span>Registered {timeAgo(node.registeredAt)}</span>
                             </div>
                           </div>
@@ -220,6 +228,10 @@ export function Dashboard() {
                           <div className="min-w-[90px] text-right">
                             <span className="mb-0.5 block font-mono text-[9px] font-semibold text-outline">TOTAL REVENUE</span>
                             <span className="font-mono text-xs font-medium text-compute-active">{formatBOTCompact(node.totalRevenue)} DGRAM</span>
+                          </div>
+                          <div className="min-w-[60px] text-right">
+                            <span className="mb-0.5 block font-mono text-[9px] font-semibold text-outline">JOBS</span>
+                            <span className="font-mono text-xs font-medium text-on-surface">{node.jobCount}</span>
                           </div>
                           <button className="cursor-pointer flex h-6 w-6 items-center justify-center rounded-full bg-surface text-outline transition-colors hover:bg-surface-bright hover:text-primary">
                             <ChevronRight className="h-3.5 w-3.5" />
