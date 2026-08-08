@@ -107,7 +107,7 @@ export function ComputeSession() {
     if (countdown.expired && selectedJob && selectedJob.status === 1 && !autoCompleted) {
       setAutoCompleted(true);
       // Notify agent to complete job on-chain
-      fetch(`${getAgentUrl(selectedJob.nodeId)}/jobs/${selectedJob.jobId}/complete`, { method: 'POST' })
+      fetch(`${getAgentUrl(selectedJob.jobId)}/jobs/${selectedJob.jobId}/complete`, { method: 'POST' })
         .then(r => r.json())
         .then(data => {
           console.log('[ComputeSession] Auto-complete triggered:', data);
@@ -116,7 +116,6 @@ export function ComputeSession() {
         .catch(err => console.error('[ComputeSession] Auto-complete failed:', err));
     }
   }, [countdown.expired, selectedJob, autoCompleted, getAgentUrl]);
-
   // Reset state when switching jobs
   useEffect(() => {
     setExtensions(0);
@@ -143,8 +142,7 @@ export function ComputeSession() {
       alert('Session expired. Extend your lease to continue executing code.');
       return;
     }
-    const result = await executeCode(selectedJobId, selectedJob.nodeId, language, code);
-    setResults(prev => [result, ...prev]);
+    const result = await executeCode(selectedJobId, selectedJob.nodeId, language, code);    setResults(prev => [result, ...prev]);
   }
 
   async function handleExtend() {
@@ -254,20 +252,19 @@ export function ComputeSession() {
       {/* Agent routing info */}
       {showAgentInfo && (
         <div className="border-b border-surface-glass bg-surface-container-low px-8 py-3">
-          <div className="font-mono text-[10px] font-semibold uppercase text-outline mb-2">Provider Agent Routing (Per-Node)</div>
+          <div className="font-mono text-[10px] font-semibold uppercase text-outline mb-2">Provider Agent Routing</div>
           <div className="space-y-1">
-            <div className="flex items-center gap-2 font-mono text-xs">
-              <span className="text-on-surface-variant">Node #1 (RTX 3060)</span>
-              <span className="text-outline">→</span>
-              <span className="text-primary">https://agent.mdloglabs.org</span>
-            </div>
-            <div className="flex items-center gap-2 font-mono text-xs">
-              <span className="text-on-surface-variant">Node #2 (AMD Radeon)</span>
-              <span className="text-outline">→</span>
-              <span className="text-primary">https://agent2.mdloglabs.org</span>
-            </div>
+            {selectedJob ? (
+              <div className="flex items-center gap-2 font-mono text-xs">
+                <span className="text-on-surface-variant">Provider Agent</span>
+                <span className="text-outline">→</span>
+                <span className="text-primary">{getAgentUrl(selectedJob.jobId) || 'Not registered'}</span>
+              </div>
+            ) : (
+              <div className="font-mono text-xs text-outline">Select a job to see provider agent URL.</div>
+            )}
+            <p className="mt-2 text-[10px] text-outline">Agent URL resolved from job's provider address. Compute runs on the actual provider machine.</p>
           </div>
-          <p className="mt-2 text-[10px] text-outline">Each node routes to its own provider agent. Compute runs on the actual provider machine.</p>
         </div>
       )}
 

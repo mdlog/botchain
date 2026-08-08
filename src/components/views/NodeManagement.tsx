@@ -30,7 +30,7 @@ const GPU_OPTIONS = [
   { model: 'CPU Only', vram: 0, tflops: 0 },
 ];
 
-const AGENT_URL = 'https://agent.mdloglabs.org';
+import { getProviderAgentUrl } from '@/config/providers';
 
 // TFLOPS lookup for per-GPU estimation
 const GPU_TFLOPS: Record<string, number> = {
@@ -240,18 +240,21 @@ export function NodeManagement() {
     setDetecting(true);
     setDupError(null);
     try {
-      // First: try agent-side detection (nvidia-smi — detects ALL GPUs in rig)
+      // First: try agent-side detection via provider's own agent
+      const agentUrl = address ? getProviderAgentUrl(address) : '';
       let agentGpus: any = null;
-      try {
-        const resp = await fetch(`${AGENT_URL}/info`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.gpu_summary && data.gpu_summary.count > 0) {
-            agentGpus = data.gpu_summary;
-            setAgentGpuInfo(agentGpus);
+      if (agentUrl) {
+        try {
+          const resp = await fetch(`${agentUrl}/info`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.gpu_summary && data.gpu_summary.count > 0) {
+              agentGpus = data.gpu_summary;
+              setAgentGpuInfo(agentGpus);
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       if (agentGpus) {
         // Agent detected GPUs via nvidia-smi — use this (most accurate)

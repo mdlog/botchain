@@ -1,19 +1,20 @@
 /**
  * useComputeSession — hook linking on-chain jobs to off-chain compute execution.
- * 
+ *
  * Consumer flow:
  * 1. Lease compute on Marketplace → get jobId
  * 2. Open Compute Session tab → select active job
  * 3. Write code → POST to provider agent → get result
  * 4. View output, iterate
- * 
- * Provider agent URL is discovered from the node's registered metadata.
- * For hackathon MVP, we use a configurable agent URL map.
+ *
+ * Provider agent URL is resolved from the job's provider address via config map.
+ * See src/config/providers.ts
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
+import { getProviderAgentUrl } from '@/config/providers';
 
 export interface ComputeJobInfo {
   jobId: bigint;
@@ -35,16 +36,6 @@ export interface ExecutionResult {
   stderr: string;
   duration: number; // ms
 }
-
-// Default provider agent URL — in production this comes from node metadata
-// Provider agent URLs per node — in production this comes from node metadata on-chain
-// For hackathon MVP, we use a config map
-const NODE_AGENT_URLS: Record<number, string> = {
-  1: 'https://agent.mdloglabs.org',    // Node #1 — mdlog-desktop (old)
-  2: 'https://agent.mdloglabs.org',    // Node #2 — re-registered on desktop
-};
-
-const DEFAULT_AGENT_URL = 'https://agent.mdloglabs.org';
 
 export function useComputeSession() {
   const { address } = useWalletContext();
@@ -106,8 +97,22 @@ export function useComputeSession() {
   ): Promise<ExecutionResult> => {
     setExecuting(true);
     try {
-      // Resolve agent URL by nodeId
-      const url = NODE_AGENT_URLS[Number(nodeId)] || DEFAULT_AGENT_URL;
+      // Resolve agent URL from the job's provider address
+      const job = jobs.find(j => j.jobId === jobId);
+      const providerAddr = job?.provider || '';
+      const url = getProviderAgentUrl(providerAddr);
+
+      if (!url) {
+        return {
+          executionId: 'error',
+          status: 'error',
+          exitCode: -1,
+          stdout: '',
+          stderr: `No agent URL registered for provider ${providerAddr.slice(0, 10)}...`,
+          duration: 0,
+        };
+      }
+
       const res = await fetch(`${url}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,29 +147,34 @@ export function useComputeSession() {
         status: 'error',
         exitCode: -1,
         stdout: '',
-        stderr: err.message || `Network error — is provider agent for node ${nodeId} running?`,
+        stderr: err.message || `Network error — is provider agent reachable?`,
         duration: 0,
       };
     } finally {
       setExecuting(false);
     }
-  }, []);
+  }, [jobs]);
 
-  // Get provider agent info for a specific node
-  const getProviderInfo = useCallback(async (nodeId: bigint) => {
+  // Get provider agent info for a specific job (by provider address)
+  const getProviderInfo = useCallback(async (jobId: bigint) => {
     try {
-      const url = NODE_AGENT_URLS[Number(nodeId)] || DEFAULT_AGENT_URL;
+      const job = jobs.find(j => j.jobId === jobId);
+      const providerAddr = job?.provider || '';
+      const url = getProviderAgentUrl(providerAddr);
+      if (!url) return null;
       const res = await fetch(`${url}/info`);
       return await res.json();
     } catch (err) {
       return null;
     }
-  }, []);
+  }, [jobs]);
 
-  // Get agent URL for a node
-  const getAgentUrl = useCallback((nodeId: bigint) => {
-    return NODE_AGENT_URLS[Number(nodeId)] || DEFAULT_AGENT_URL;
-  }, []);
+  // Get agent URL for a job (resolved by provider address, not nodeId)
+  const getAgentUrl = useCallback((jobId: bigint) => {
+    const job = jobs.find(j => j.jobId === jobId);
+    const providerAddr = job?.provider || '';
+    return getProviderAgentUrl(providerAddr);
+  }, [jobs]);
 
   return {
     jobs,
