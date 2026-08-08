@@ -33,8 +33,8 @@ interface IComputeRegistry {
         bool verified;
     }
 
-    function getNode(uint256 nodeId) external view returns (ComputeNode memory);
-    function addRevenue(uint256 nodeId, uint96 amount) external;
+    function getNode(uint64 nodeId) external view returns (ComputeNode memory);
+    function addRevenue(uint64 nodeId, uint96 amount) external;
 }
 
 interface IPriceOracle {
@@ -59,7 +59,7 @@ contract ComputeIndexToken {
     IPriceOracle public oracle;
 
     struct Deposit {
-        uint256 nodeId;        // which node backs this deposit
+        uint64 nodeId;          // which node backs this deposit
         uint256 amountWei;     // BOT deposited
         uint256 mintedTokens;  // CIF tokens minted
         uint64 depositedAt;
@@ -75,7 +75,7 @@ contract ComputeIndexToken {
     // ── Events ─────────────────────────────────────────────
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Deposited(address indexed provider, uint256 indexed nodeId, uint256 amountWei, uint256 mintedTokens);
+    event Deposited(address indexed provider, uint64 indexed nodeId, uint256 amountWei, uint256 mintedTokens);
     event Withdrawn(address indexed provider, uint256 amountWei, uint256 burnedTokens);
 
     // ── Constructor ────────────────────────────────────────
@@ -92,7 +92,7 @@ contract ComputeIndexToken {
      *         Mint amount = deposit * issuanceRatio (based on node revenue & AI valuation).
      * @param nodeId The compute node backing this deposit
      */
-    function depositRevenue(uint256 nodeId) external payable returns (uint256 minted) {
+    function depositRevenue(uint64 nodeId) external payable returns (uint256 minted) {
         require(msg.value > 0, "Must deposit BOT");
 
         IComputeRegistry.ComputeNode memory node = registry.getNode(nodeId);

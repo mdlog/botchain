@@ -25,9 +25,9 @@ import os from 'os';
 const PRIVATE_KEY = process.env.PROVIDER_PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://rpc.bohr.life';
 const CHAIN_ID = Number(process.env.CHAIN_ID || 968);
-const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0x1476b38108ca44A550b780dc7223a48488b83309';
-const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0xb873AB623A0387974b6DC8a95da503deAB1313a7';
-const ORACLE_ADDR = process.env.ORACLE_ADDR || '0xe106ba1671d6c0C7DDfEc7386d426CA800339D42';
+const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5';
+const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0x89b6fBFB647B8a07c4d1520871440f0B01314f87';
+const ORACLE_ADDR = process.env.ORACLE_ADDR || '0x2BF8219f6b296A85904e4A486963496c3A0d1b43';
 
 const chain = {
   id: CHAIN_ID,
@@ -37,12 +37,12 @@ const chain = {
 };
 
 const REGISTRY_ABI = [
-  { name: 'registerNode', type: 'function', stateMutability: 'nonpayable', inputs: [ { name: 'model', type: 'string' }, { name: 'vramGB', type: 'uint16' }, { name: 'tflops', type: 'uint16' }, { name: 'region', type: 'string' } ], outputs: [{ name: 'nodeId', type: 'uint256' }] },
-  { name: 'updateStatus', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint256' }, { name: 'newStatus', type: 'uint8' }], outputs: [] },
-  { name: 'heartbeat', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint256' }], outputs: [] },
-  { name: 'verifyNode', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint256' }], outputs: [] },
-  { name: 'getNode', type: 'function', stateMutability: 'view', inputs: [{ name: 'nodeId', type: 'uint256' }], outputs: [{ name: 'node', type: 'tuple', components: [ { name: 'provider', type: 'address' }, { name: 'specs', type: 'tuple', components: [ { name: 'model', type: 'string' }, { name: 'vramGB', type: 'uint16' }, { name: 'tflops', type: 'uint16' }, { name: 'region', type: 'string' } ] }, { name: 'status', type: 'uint8' }, { name: 'totalRevenue', type: 'uint96' }, { name: 'registeredAt', type: 'uint64' }, { name: 'lastHeartbeat', type: 'uint64' }, { name: 'verified', type: 'bool' } ] }] },
-  { name: 'getProviderNodes', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'nodeIds', type: 'uint256[]' }] },
+  { name: 'registerNode', type: 'function', stateMutability: 'nonpayable', inputs: [ { name: 'model', type: 'string' }, { name: 'vramGB', type: 'uint16' }, { name: 'tflops', type: 'uint16' }, { name: 'region', type: 'string' } ], outputs: [{ name: 'nodeId', type: 'uint64' }] },
+  { name: 'updateStatus', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint64' }, { name: 'newStatus', type: 'uint8' }], outputs: [] },
+  { name: 'heartbeat', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint64' }], outputs: [] },
+  { name: 'verifyNode', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'nodeId', type: 'uint64' }], outputs: [] },
+  { name: 'getNode', type: 'function', stateMutability: 'view', inputs: [{ name: 'nodeId', type: 'uint64' }], outputs: [{ name: 'node', type: 'tuple', components: [ { name: 'provider', type: 'address' }, { name: 'specs', type: 'tuple', components: [ { name: 'model', type: 'string' }, { name: 'vramGB', type: 'uint16' }, { name: 'tflops', type: 'uint16' }, { name: 'region', type: 'string' } ] }, { name: 'status', type: 'uint8' }, { name: 'totalRevenue', type: 'uint96' }, { name: 'registeredAt', type: 'uint64' }, { name: 'lastHeartbeat', type: 'uint64' }, { name: 'verified', type: 'bool' } ] }] },
+  { name: 'getProviderNodes', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'nodeIds', type: 'uint64[]' }] },
   { name: 'getProviderRevenue', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'total', type: 'uint96' }] },
   { name: 'nodeCount', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
   { name: 'totalActiveNodes', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },

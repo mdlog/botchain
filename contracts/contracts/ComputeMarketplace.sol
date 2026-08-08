@@ -28,8 +28,8 @@ interface IComputeRegistry {
         bool verified;
     }
 
-    function getNode(uint256 nodeId) external view returns (ComputeNode memory);
-    function addRevenue(uint256 nodeId, uint96 amount) external;
+    function getNode(uint64 nodeId) external view returns (ComputeNode memory);
+    function addRevenue(uint64 nodeId, uint96 amount) external;
 }
 
 interface IPriceOracle {
@@ -50,7 +50,7 @@ contract ComputeMarketplace {
     }
 
     struct ComputeJob {
-        uint256 nodeId;          // which compute node
+        uint64 nodeId;          // which compute node
         address consumer;        // who requested the job
         address provider;        // who provides compute
         string jobType;          // e.g. "LLM Training", "Inference"
@@ -74,7 +74,7 @@ contract ComputeMarketplace {
     uint256 public totalJobs;
 
     // ── Events ─────────────────────────────────────────────
-    event JobCreated(uint256 indexed jobId, uint256 indexed nodeId, address indexed consumer, string jobType, uint64 durationHours, uint256 pricePerHourWei, uint256 paymentAmount);
+    event JobCreated(uint256 indexed jobId, uint64 indexed nodeId, address indexed consumer, string jobType, uint64 durationHours, uint256 pricePerHourWei, uint256 paymentAmount);
     event JobAccepted(uint256 indexed jobId, address indexed provider);
     event JobCompleted(uint256 indexed jobId, uint64 completedAt, uint256 totalCost, uint256 refund);
     event JobCancelled(uint256 indexed jobId, uint256 refund);
@@ -96,7 +96,7 @@ contract ComputeMarketplace {
      * @param gpuModel GPU model for price lookup
      */
     function createJob(
-        uint256 nodeId,
+        uint64 nodeId,
         string calldata jobType,
         string calldata specHash,
         uint64 durationHours,

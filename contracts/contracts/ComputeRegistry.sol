@@ -4,64 +4,51 @@ pragma solidity ^0.8.24;
 /**
  * @title ComputeRegistry
  * @notice Registers GPU compute nodes on BOT Chain DePIN network.
- *         Stores hardware specs, status, and provider info.
- *         This is the RWA attestation layer — each registered node
- *         represents a real physical compute asset.
- *
- *         Node IDs are hash-based uint256 (unique per provider+hardware+time),
- *         not sequential integers. Format: node-id:<uint256 hash>
+ *         Node IDs are uint64 derived from keccak256 hash (8 bytes),
+ *         giving short unique IDs like 0xa1b2c3d4e5f6a7b8.
  */
 contract ComputeRegistry {
-    // ── Types ──────────────────────────────────────────────
-    enum NodeStatus {
-        Inactive,   // 0 — registered but not active
-        Active,     // 1 — online and accepting jobs
-        Busy,       // 2 — online but fully allocated
-        Offline     // 3 — disconnected
-    }
+    enum NodeStatus { Inactive, Active, Busy, Offline }
 
     struct GpuSpecs {
-        string model;          // e.g. "NVIDIA H100"
-        uint16 vramGB;         // e.g. 80
-        uint16 tflops;         // theoretical TFLOPS
-        string region;         // e.g. "US-EAST"
+        string model;
+        uint16 vramGB;
+        uint16 tflops;
+        string region;
     }
 
     struct ComputeNode {
-        address provider;      // who owns this hardware
-        GpuSpecs specs;        // hardware details
-        NodeStatus status;     // current availability
-        uint96 totalRevenue;   // lifetime BOT earned (in wei)
-        uint64 registeredAt;   // block timestamp
-        uint64 lastHeartbeat;  // last status update
-        bool verified;         // verified by protocol
+        address provider;
+        GpuSpecs specs;
+        NodeStatus status;
+        uint96 totalRevenue;
+        uint64 registeredAt;
+        uint64 lastHeartbeat;
+        bool verified;
     }
 
     // ── Storage ────────────────────────────────────────────
-    mapping(uint256 => ComputeNode) public nodes;
-    mapping(address => uint256[]) public providerNodes;
-    uint256 public nodeCount;    // total registered nodes (for stats)
+    mapping(uint64 => ComputeNode) public nodes;
+    mapping(address => uint64[]) public providerNodes;
+    uint64 public nodeCount;
     address public owner;
     uint256 public totalActiveNodes;
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    address public marketplace;  // authorized marketplace contract
+    address public marketplace;
 
     // ── Events ─────────────────────────────────────────────
-    event NodeRegistered(uint256 indexed nodeId, address indexed provider, string model, string region);
-    event NodeStatusUpdated(uint256 indexed nodeId, NodeStatus newStatus);
-    event NodeVerified(uint256 indexed nodeId);
-    event RevenueUpdated(uint256 indexed nodeId, uint96 newTotal);
+    event NodeRegistered(uint64 indexed nodeId, address indexed provider, string model, string region);
+    event NodeStatusUpdated(uint64 indexed nodeId, NodeStatus newStatus);
+    event NodeVerified(uint64 indexed nodeId);
+    event RevenueUpdated(uint64 indexed nodeId, uint96 newTotal);
     event MarketplaceSet(address marketplace);
 
     // ── Modifiers ──────────────────────────────────────────
-    modifier onlyProvider(uint256 nodeId) {
+    modifier onlyProvider(uint64 nodeId) {
         require(nodes[nodeId].provider == msg.sender, "Not the provider");
         _;
     }
 
-    modifier nodeExists(uint256 nodeId) {
+    modifier nodeExists(uint64 nodeId) {
         require(nodes[nodeId].provider != address(0), "Node does not exist");
         _;
     }
@@ -71,41 +58,21 @@ contract ComputeRegistry {
         _;
     }
 
-    // ── Constructor ────────────────────────────────────────
-    constructor() {
-        owner = msg.sender;
-    }
+    constructor() { owner = msg.sender; }
 
-    // ── External Functions ─────────────────────────────────
-
-    /**
-     * @notice Register a new compute node. Caller becomes the provider.
-     *         Node ID is derived from keccak256(provider + hardware + time + block)
-     *         ensuring uniqueness across all registrations.
-     * @param model GPU model name
-     * @param vramGB VRAM in GB
-     * @param tflops Theoretical TFLOPS
-     * @param region Geographic region code
-     */
+    // ── Register ───────────────────────────────────────────
     function registerNode(
         string calldata model,
         uint16 vramGB,
         uint16 tflops,
         string calldata region
-    ) external returns (uint256 nodeId) {
+    ) external returns (uint64 nodeId) {
         require(bytes(model).length > 0, "Model required");
         require(vramGB > 0, "VRAM required");
 
-        // Generate unique node ID from provider + hardware specs + time + block
-        nodeId = uint256(keccak256(abi.encodePacked(
-            msg.sender,
-            model,
-            vramGB,
-            tflops,
-            region,
-            block.timestamp,
-            block.number
-        )));
+        nodeId = uint64(bytes8(keccak256(abi.encodePacked(
+            msg.sender, model, vramGB, tflops, region, block.timestamp, block.number
+        ))));
 
         require(nodes[nodeId].provider == address(0), "Node already exists");
 
@@ -124,95 +91,50 @@ contract ComputeRegistry {
         emit NodeRegistered(nodeId, msg.sender, model, region);
     }
 
-    /**
-     * @notice Update node status (provider only).
-     */
-    function updateStatus(uint256 nodeId, NodeStatus newStatus)
-        external
-        nodeExists(nodeId)
-        onlyProvider(nodeId)
+    function updateStatus(uint64 nodeId, NodeStatus newStatus)
+        external nodeExists(nodeId) onlyProvider(nodeId)
     {
         NodeStatus old = nodes[nodeId].status;
         nodes[nodeId].status = newStatus;
         nodes[nodeId].lastHeartbeat = uint64(block.timestamp);
-
-        if (old != NodeStatus.Active && newStatus == NodeStatus.Active) {
-            totalActiveNodes++;
-        } else if (old == NodeStatus.Active && newStatus != NodeStatus.Active) {
-            totalActiveNodes--;
-        }
-
+        if (old != NodeStatus.Active && newStatus == NodeStatus.Active) totalActiveNodes++;
+        else if (old == NodeStatus.Active && newStatus != NodeStatus.Active) totalActiveNodes--;
         emit NodeStatusUpdated(nodeId, newStatus);
     }
 
-    /**
-     * @notice Heartbeat — provider confirms node is still alive.
-     */
-    function heartbeat(uint256 nodeId)
-        external
-        nodeExists(nodeId)
-        onlyProvider(nodeId)
-    {
+    function heartbeat(uint64 nodeId) external nodeExists(nodeId) onlyProvider(nodeId) {
         nodes[nodeId].lastHeartbeat = uint64(block.timestamp);
     }
 
-    /**
-     * @notice Protocol owner verifies a node (attestation).
-     */
-    function verifyNode(uint256 nodeId) external nodeExists(nodeId) {
-        // In MVP, anyone can verify — in production, restricted to attestors
+    function verifyNode(uint64 nodeId) external nodeExists(nodeId) {
         nodes[nodeId].verified = true;
         emit NodeVerified(nodeId);
     }
 
-    /**
-     * @notice Set marketplace contract (owner only).
-     */
     function setMarketplace(address _marketplace) external {
         require(msg.sender == owner || marketplace == address(0), "Not authorized");
         marketplace = _marketplace;
         emit MarketplaceSet(_marketplace);
     }
 
-    /**
-     * @notice Add revenue to a node (called by marketplace on job settlement).
-     */
-    function addRevenue(uint256 nodeId, uint96 amount)
-        external
-        nodeExists(nodeId)
-        onlyMarketplace
+    function addRevenue(uint64 nodeId, uint96 amount)
+        external nodeExists(nodeId) onlyMarketplace
     {
         nodes[nodeId].totalRevenue += amount;
         emit RevenueUpdated(nodeId, nodes[nodeId].totalRevenue);
     }
 
-    // ── View Functions ─────────────────────────────────────
-
-    function getNode(uint256 nodeId)
-        external
-        view
-        nodeExists(nodeId)
-        returns (ComputeNode memory)
-    {
+    // ── Views ──────────────────────────────────────────────
+    function getNode(uint64 nodeId) external view nodeExists(nodeId) returns (ComputeNode memory) {
         return nodes[nodeId];
     }
 
-    function getProviderNodes(address provider)
-        external
-        view
-        returns (uint256[] memory)
-    {
+    function getProviderNodes(address provider) external view returns (uint64[] memory) {
         return providerNodes[provider];
     }
 
-    function getProviderRevenue(address provider)
-        external
-        view
-        returns (uint96 total)
-    {
-        uint256[] memory ids = providerNodes[provider];
-        for (uint256 i = 0; i < ids.length; i++) {
-            total += nodes[ids[i]].totalRevenue;
-        }
+    function getProviderRevenue(address provider) external view returns (uint96 total) {
+        uint64[] memory ids = providerNodes[provider];
+        for (uint256 i = 0; i < ids.length; i++) total += nodes[ids[i]].totalRevenue;
     }
 }

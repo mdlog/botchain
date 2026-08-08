@@ -1,11 +1,11 @@
 {
   "network": "968",
   "contracts": {
-    "ComputeRegistry": "0x1476b38108ca44A550b780dc7223a48488b83309",
-    "PriceOracle": "0xe106ba1671d6c0C7DDfEc7386d426CA800339D42",
-    "ComputeMarketplace": "0xb873AB623A0387974b6DC8a95da503deAB1313a7",
-    "ComputeIndexToken": "0x77729F63dAC6e27065641aA6036bD1De6674290E"
+    "ComputeRegistry": "0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5",
+    "PriceOracle": "0x2BF8219f6b296A85904e4A486963496c3A0d1b43",
+    "ComputeMarketplace": "0x89b6fBFB647B8a07c4d1520871440f0B01314f87",
+    "ComputeIndexToken": "0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E"
   },
-  "deployedAt": "2026-08-08T01:39:00.000Z",
-  "changes": "v4: hash-based node IDs (keccak256 instead of sequential)"
+  "deployedAt": "2026-08-08T02:03:00.000Z",
+  "changes": "v5: uint64 node IDs (8 bytes from keccak256)"
 }
