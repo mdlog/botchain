@@ -182,7 +182,6 @@ pub async fn execute(config: &ExecutionConfig) -> Result<ExecutionResult> {
         "--bind".to_string(), workspace.to_string_lossy().to_string(), "/workspace".to_string(),
         "--chdir".to_string(), "/workspace".to_string(),
         "--unshare-all".to_string(),
-        "--share-net".to_string(),
         "--".to_string(), "/bin/sh".to_string(), "-c".to_string(), inner_cmd,
     ]);
 
