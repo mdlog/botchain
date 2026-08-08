@@ -79,6 +79,7 @@ function formatCountdown(seconds: number): string {
 export function ComputeSession() {
   const { address } = useWalletContext();
   const { jobs, loading, executing, executeCode, getAgentUrl, reloadJobs } = useComputeSession();
+  const [agentUrl, setAgentUrl] = useState<string>('');
   const { createJob } = useComputeMarketplace();
 
   const [selectedJobId, setSelectedJobId] = useState<bigint | null>(null);
@@ -102,12 +103,17 @@ export function ComputeSession() {
     extensions,
   );
 
+  // Resolve agent URL when job changes
+  useEffect(() => {
+    if (!selectedJob) { setAgentUrl(''); return; }
+    getAgentUrl(selectedJob.jobId).then(setAgentUrl);
+  }, [selectedJob, getAgentUrl]);
+
   // Auto-complete when expired
   useEffect(() => {
-    if (countdown.expired && selectedJob && selectedJob.status === 1 && !autoCompleted) {
+    if (countdown.expired && selectedJob && selectedJob.status === 1 && !autoCompleted && agentUrl) {
       setAutoCompleted(true);
-      // Notify agent to complete job on-chain
-      fetch(`${getAgentUrl(selectedJob.jobId)}/jobs/${selectedJob.jobId}/complete`, { method: 'POST' })
+      fetch(`${agentUrl}/jobs/${selectedJob.jobId}/complete`, { method: 'POST' })
         .then(r => r.json())
         .then(data => {
           console.log('[ComputeSession] Auto-complete triggered:', data);
@@ -115,7 +121,7 @@ export function ComputeSession() {
         })
         .catch(err => console.error('[ComputeSession] Auto-complete failed:', err));
     }
-  }, [countdown.expired, selectedJob, autoCompleted, getAgentUrl]);
+  }, [countdown.expired, selectedJob, autoCompleted, agentUrl]);
   // Reset state when switching jobs
   useEffect(() => {
     setExtensions(0);
@@ -258,7 +264,7 @@ export function ComputeSession() {
               <div className="flex items-center gap-2 font-mono text-xs">
                 <span className="text-on-surface-variant">Provider Agent</span>
                 <span className="text-outline">→</span>
-                <span className="text-primary">{getAgentUrl(selectedJob.jobId) || 'Not registered'}</span>
+                <span className="text-primary">{agentUrl || 'Not registered'}</span>
               </div>
             ) : (
               <div className="font-mono text-xs text-outline">Select a job to see provider agent URL.</div>

@@ -4,8 +4,9 @@
     "ComputeRegistry": "0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5",
     "PriceOracle": "0x2BF8219f6b296A85904e4A486963496c3A0d1b43",
     "ComputeMarketplace": "0x89b6fBFB647B8a07c4d1520871440f0B01314f87",
-    "ComputeIndexToken": "0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E"
+    "ComputeIndexToken": "0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E",
+    "AgentRegistry": "0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4"
   },
-  "deployedAt": "2026-08-08T02:03:00.000Z",
+  "deployedAt": "2026-08-08T03:01:51.784Z",
   "changes": "v5: uint64 node IDs (8 bytes from keccak256)"
 }

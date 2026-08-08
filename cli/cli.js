@@ -28,6 +28,7 @@ const CHAIN_ID = Number(process.env.CHAIN_ID || 968);
 const REGISTRY_ADDR = process.env.REGISTRY_ADDR || '0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5';
 const MARKETPLACE_ADDR = process.env.MARKETPLACE_ADDR || '0x89b6fBFB647B8a07c4d1520871440f0B01314f87';
 const ORACLE_ADDR = process.env.ORACLE_ADDR || '0x2BF8219f6b296A85904e4A486963496c3A0d1b43';
+const AGENT_REGISTRY_ADDR = process.env.AGENT_REGISTRY_ADDR || '0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4';
 
 const chain = {
   id: CHAIN_ID,
@@ -46,6 +47,11 @@ const REGISTRY_ABI = [
   { name: 'getProviderRevenue', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'total', type: 'uint96' }] },
   { name: 'nodeCount', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
   { name: 'totalActiveNodes', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+];
+
+const AGENT_REGISTRY_ABI = [
+  { name: 'setAgentUrl', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'url', type: 'string' }], outputs: [] },
+  { name: 'getAgentUrl', type: 'function', stateMutability: 'view', inputs: [{ name: 'provider', type: 'address' }], outputs: [{ name: 'url', type: 'string' }] },
 ];
 
 const ORACLE_ABI = [
@@ -306,6 +312,103 @@ async function cmdBalance() {
   console.log('   Balance:  '+formatEther(bal)+' DGRAM\n');
 }
 
+// ── cloudflared tunnel: auto-create tunnel + register URL on-chain ──
+async function cmdTunnel(args) {
+  const flags = parseArgs(args);
+  const port = flags.port || 3006;
+  const { walletClient, account } = getWallet();
+
+  console.log('🌐 Starting Cloudflare Tunnel…\n');
+  console.log('   Provider: ' + account.address);
+  console.log('   Local port: ' + port);
+  console.log('');
+
+  const { spawn } = await import('child_process');
+  const child = spawn('cloudflared', ['tunnel', '--url', 'http://localhost:' + port, '--protocol', 'http2'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let tunnelUrl = null;
+  const urlRegex = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+  let stderrBuf = '';
+  let resolved = false;
+
+  return new Promise((resolve) => {
+    child.stderr.on('data', (data) => {
+      const text = data.toString();
+      stderrBuf += text;
+      const match = text.match(urlRegex);
+      if (match && !tunnelUrl) tunnelUrl = match[0];
+      if (!tunnelUrl) {
+        const bufMatch = stderrBuf.match(urlRegex);
+        if (bufMatch) tunnelUrl = bufMatch[0];
+      }
+
+      if (tunnelUrl && !resolved) {
+        resolved = true;
+        setTimeout(async () => {
+          console.log('   ✅ Tunnel URL: ' + tunnelUrl);
+          console.log('\n📝 Registering agent URL on-chain…');
+          try {
+            const hash = await walletClient.writeContract({
+              address: AGENT_REGISTRY_ADDR, abi: AGENT_REGISTRY_ABI,
+              functionName: 'setAgentUrl', args: [tunnelUrl], account, chain,
+            });
+            console.log('   Tx: ' + hash);
+            const rc = await publicClient.waitForTransactionReceipt({ hash });
+            if (rc.status === 'success') console.log('   ✅ Agent URL registered on-chain!');
+            else console.log('   ❌ Registration tx failed');
+          } catch (err) {
+            console.log('   ❌ Register failed: ' + (err.shortMessage || err.message?.slice(0, 120)));
+            console.log('   Register manually: node cli.js set-agent-url ' + tunnelUrl);
+          }
+
+          console.log('\n╔══════════════════════════════════════════════╗');
+          console.log('║  ✅ TUNNEL ACTIVE — agent reachable!          ║');
+          console.log('╠══════════════════════════════════════════════╣');
+          console.log('║  URL: ' + tunnelUrl.slice(0, 38).padEnd(38) + '║');
+          console.log('║  Local: ' + ('http://localhost:' + port).slice(0, 38).padEnd(38) + '║');
+          console.log('║  Provider: ' + shortAddr(account.address).padEnd(38) + '║');
+          console.log('╚══════════════════════════════════════════════╝');
+          console.log('\n   Tunnel running in foreground. Ctrl+C to stop.');
+          console.log('   Frontend auto-discovers URL from chain.\n');
+          resolve();
+        }, 3000);
+      }
+    });
+
+    child.on('error', (err) => {
+      console.log('❌ Failed to start cloudflared: ' + err.message);
+      console.log('   Install: sudo apt install cloudflared');
+      resolve();
+    });
+
+    setTimeout(() => {
+      if (!tunnelUrl && !resolved) {
+        console.log('❌ No tunnel URL after 30s.');
+        console.log('   stderr: ' + stderrBuf.slice(-200));
+        child.kill();
+        resolve();
+      }
+    }, 30000);
+  });
+}
+
+async function cmdSetAgentUrl(args) {
+  const url = args[0];
+  if (!url) { console.error('Usage: node cli.js set-agent-url <https://...>'); process.exit(1); }
+  const { walletClient, account } = getWallet();
+  console.log('📝 Setting agent URL: ' + url);
+  console.log('   Provider: ' + account.address);
+  const hash = await walletClient.writeContract({
+    address: AGENT_REGISTRY_ADDR, abi: AGENT_REGISTRY_ABI,
+    functionName: 'setAgentUrl', args: [url], account, chain,
+  });
+  console.log('   Tx: ' + hash);
+  const rc = await publicClient.waitForTransactionReceipt({ hash });
+  console.log(rc.status === 'success' ? '✅ Agent URL set!' : '❌ Failed');
+}
+
 async function cmdStatus() {
   console.log('\n🌐 '+chain.name+' (Chain ID '+chain.id+')');
   console.log('   RPC: '+RPC_URL+'\n');
@@ -319,7 +422,7 @@ async function cmdStatus() {
 
 // ── Main ───────────────────────────────────────────────
 const [cmd,...rest]=process.argv.slice(2);
-const commands={setup:cmdSetup,detect:cmdDetect,register:cmdRegister,activate:cmdActivate,deactivate:cmdDeactivate,verify:cmdVerify,heartbeat:cmdHeartbeat,list:cmdList,mine:cmdMine,info:cmdInfo,balance:cmdBalance,status:cmdStatus};
+const commands={setup:cmdSetup,detect:cmdDetect,register:cmdRegister,activate:cmdActivate,deactivate:cmdDeactivate,verify:cmdVerify,heartbeat:cmdHeartbeat,list:cmdList,mine:cmdMine,info:cmdInfo,balance:cmdBalance,status:cmdStatus,tunnel:cmdTunnel,'set-agent-url':cmdSetAgentUrl};
 
 if(!cmd||cmd==='--help'||cmd==='-h'){
   console.log('\n╔══════════════════════════════════════════════╗');
@@ -340,7 +443,9 @@ if(!cmd||cmd==='--help'||cmd==='-h'){
   console.log('  mine                      List your nodes');
   console.log('  info <id>                 Node details');
   console.log('  balance                   Revenue + wallet balance');
-  console.log('  status                    Network + contract status\n');
+  console.log('  status                    Network + contract status');
+  console.log('  tunnel                    Start cloudflared tunnel + register URL on-chain');
+  console.log('  set-agent-url <url>       Manually set agent URL on-chain\n');
   console.log('Examples:');
   console.log('  node cli.js setup');
   console.log('  node cli.js setup --model "NVIDIA RTX 3060" --vram 12 --tflops 13 --region SG');

@@ -46,6 +46,7 @@ export const CONTRACTS = {
   PriceOracle: '0x2BF8219f6b296A85904e4A486963496c3A0d1b43' as Address,
   ComputeMarketplace: '0x89b6fBFB647B8a07c4d1520871440f0B01314f87' as Address,
   ComputeIndexToken: '0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E' as Address,
+  AgentRegistry: '0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4' as Address,
 } as const;
 
 // ── Helper: create wallet client from window.ethereum ────

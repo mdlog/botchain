@@ -7,14 +7,15 @@
  * 3. Write code → POST to provider agent → get result
  * 4. View output, iterate
  *
- * Provider agent URL is resolved from the job's provider address via config map.
- * See src/config/providers.ts
+ * Provider agent URL is resolved from:
+ *   1. AgentRegistry contract (on-chain, auto-registered via cloudflared tunnel)
+ *   2. Fallback static config map (for legacy providers)
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
-import { getProviderAgentUrl } from '@/config/providers';
+import { getProviderAgentUrlAsync } from '@/config/providers';
 
 export interface ComputeJobInfo {
   jobId: bigint;
@@ -36,6 +37,9 @@ export interface ExecutionResult {
   stderr: string;
   duration: number; // ms
 }
+
+// Cache: provider address → agent URL (avoids redundant chain reads)
+const agentUrlCache = new Map<string, string>();
 
 export function useComputeSession() {
   const { address } = useWalletContext();
@@ -88,6 +92,16 @@ export function useComputeSession() {
     loadJobs();
   }, [loadJobs]);
 
+  // Resolve agent URL for a provider (cached, async — checks on-chain first)
+  const resolveAgentUrl = useCallback(async (providerAddress: string): Promise<string> => {
+    if (!providerAddress) return '';
+    const key = providerAddress.toLowerCase();
+    if (agentUrlCache.has(key)) return agentUrlCache.get(key)!;
+    const url = await getProviderAgentUrlAsync(providerAddress);
+    agentUrlCache.set(key, url);
+    return url;
+  }, []);
+
   // Execute code on provider's machine via their agent
   const executeCode = useCallback(async (
     jobId: bigint,
@@ -97,10 +111,9 @@ export function useComputeSession() {
   ): Promise<ExecutionResult> => {
     setExecuting(true);
     try {
-      // Resolve agent URL from the job's provider address
       const job = jobs.find(j => j.jobId === jobId);
       const providerAddr = job?.provider || '';
-      const url = getProviderAgentUrl(providerAddr);
+      const url = await resolveAgentUrl(providerAddr);
 
       if (!url) {
         return {
@@ -116,11 +129,7 @@ export function useComputeSession() {
       const res = await fetch(`${url}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jobId: Number(jobId),
-          language,
-          code,
-        }),
+        body: JSON.stringify({ jobId: Number(jobId), language, code }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -153,28 +162,28 @@ export function useComputeSession() {
     } finally {
       setExecuting(false);
     }
-  }, [jobs]);
+  }, [jobs, resolveAgentUrl]);
 
-  // Get provider agent info for a specific job (by provider address)
+  // Get provider agent info for a specific job
   const getProviderInfo = useCallback(async (jobId: bigint) => {
     try {
       const job = jobs.find(j => j.jobId === jobId);
       const providerAddr = job?.provider || '';
-      const url = getProviderAgentUrl(providerAddr);
+      const url = await resolveAgentUrl(providerAddr);
       if (!url) return null;
       const res = await fetch(`${url}/info`);
       return await res.json();
     } catch (err) {
       return null;
     }
-  }, [jobs]);
+  }, [jobs, resolveAgentUrl]);
 
-  // Get agent URL for a job (resolved by provider address, not nodeId)
-  const getAgentUrl = useCallback((jobId: bigint) => {
+  // Get agent URL for a job (async — resolves from chain or fallback)
+  const getAgentUrl = useCallback(async (jobId: bigint): Promise<string> => {
     const job = jobs.find(j => j.jobId === jobId);
     const providerAddr = job?.provider || '';
-    return getProviderAgentUrl(providerAddr);
-  }, [jobs]);
+    return resolveAgentUrl(providerAddr);
+  }, [jobs, resolveAgentUrl]);
 
   return {
     jobs,

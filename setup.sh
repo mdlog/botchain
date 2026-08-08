@@ -39,6 +39,7 @@ CHAIN_ID="${CHAIN_ID:-968}"
 REGISTRY_ADDR="0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5"
 MARKETPLACE_ADDR="0x89b6fBFB647B8a07c4d1520871440f0B01314f87"
 ORACLE_ADDR="0x2BF8219f6b296A85904e4A486963496c3A0d1b43"
+AGENT_REGISTRY_ADDR="0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4"
 
 # ── Helper: securely read private key ──────────────────
 read_and_store_key() {
@@ -78,6 +79,7 @@ read_and_store_key() {
     printf 'MARKETPLACE_ADDR=%s\n' "$MARKETPLACE_ADDR"
     printf 'ORACLE_ADDR=%s\n' "$ORACLE_ADDR"
     printf 'AGENT_PORT=3006\n'
+    printf 'AGENT_REGISTRY_ADDR=%s\n' "$AGENT_REGISTRY_ADDR"
   } > .env
 
   # Clear key from shell variable — only .env has it now
@@ -87,7 +89,7 @@ read_and_store_key() {
 }
 
 # ── Step 0: Configuration ──────────────────────────────
-step "Step 0/6: Configuration"
+step "Step 0/7: Configuration"
 
 info "Install directory: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -103,7 +105,7 @@ if ! grep -q '^PROVIDER_PRIVATE_KEY=0x[0-9a-fA-F]\{64\}$' .env 2>/dev/null; then
 fi
 
 # ── Step 1: Check Node.js (for CLI registration only) ──
-step "Step 1/6: Check Node.js (CLI registration)"
+step "Step 1/7: Check Node.js (CLI registration)"
 
 if command -v node &>/dev/null; then
   NODE_VER=$(node -v | sed 's/v//')
@@ -132,7 +134,7 @@ else
 fi
 
 # ── Step 2: Download CLI (for node registration) ───────
-step "Step 2/6: Download CLI"
+step "Step 2/7: Download CLI"
 
 info "Downloading CLI files..."
 
@@ -142,20 +144,20 @@ curl -fsSL "$REPO_RAW/cli/package.json" -o package.json
 ok "CLI files downloaded"
 
 # ── Step 3: Install CLI dependencies ───────────────────
-step "Step 3/6: Install CLI Dependencies"
+step "Step 3/7: Install CLI Dependencies"
 
 info "Running npm install..."
 npm install --silent 2>/dev/null
 ok "Dependencies installed"
 
 # ── Step 4: Run setup (detect + register + activate + verify) ──
-step "Step 4/6: Node Registration (detect → register → activate → verify)"
+step "Step 4/7: Node Registration (detect → register → activate → verify)"
 
 # Key is read from .env by dotenv — NOT from process environment
 node cli.js setup || { err "Registration failed!"; exit 1; }
 
 # ── Step 5: Check Rust toolchain ───────────────────────
-step "Step 5/6: Check Rust Toolchain"
+step "Step 5/7: Check Rust Toolchain"
 
 if command -v cargo &>/dev/null; then
   RUST_VER=$(rustc --version | awk '{print $2}')
@@ -168,7 +170,7 @@ else
 fi
 
 # ── Step 6: Download + build Rust compute agent ────────
-step "Step 6/6: Build Rust Compute Agent"
+step "Step 6/7: Build Rust Compute Agent"
 
 info "Downloading Rust agent source..."
 
@@ -200,6 +202,51 @@ if [[ ! -f "$BINARY" ]]; then
 fi
 
 ok "Binary: $BINARY ($(du -h "$BINARY" | cut -f1))"
+
+# ── Step 7: Start tunnel + register agent URL on-chain ──
+step "Step 7/7: Cloudflare Tunnel + Agent URL Registration"
+
+# Check if cloudflared is installed
+if ! command -v cloudflared &>/dev/null; then
+  info "Installing cloudflared..."
+  if command -v apt-get &>/dev/null; then
+    sudo apt-get install -y cloudflared 2>/dev/null || curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared
+  elif command -v brew &>/dev/null; then
+    brew install cloudflared
+  else
+    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && sudo chmod +x /usr/local/bin/cloudflared
+  fi
+fi
+
+if command -v cloudflared &>/dev/null; then
+  ok "cloudflared found: $(cloudflared --version 2>&1 | head -1)"
+
+  # Start compute agent in background first
+  info "Starting compute agent in background..."
+  BINARY="$INSTALL_DIR/compute-agent-rs/target/release/computerwa-agent"
+  if [[ -f "$BINARY" ]]; then
+    # Kill any existing agent on port 3006
+    fuser -k 3006/tcp 2>/dev/null || true
+    cd "$INSTALL_DIR/compute-agent-rs"
+    nohup ./target/release/computerwa-agent > agent.log 2>&1 &
+    AGENT_PID=$!
+    cd "$INSTALL_DIR"
+    sleep 2
+    ok "Compute agent started (PID: $AGENT_PID)"
+  else
+    warn "Binary not found, skipping agent start. Tunnel will still be created."
+  fi
+
+  info "Starting Cloudflare tunnel (this gives you a public HTTPS URL)..."
+  info "Registering tunnel URL on-chain so frontend can discover your agent..."
+  echo ""
+
+  # Run tunnel command — it captures the URL and registers on-chain
+  node cli.js tunnel --port 3006 || warn "Tunnel failed. Run manually: node cli.js tunnel"
+else
+  warn "cloudflared not installed. Agent URL not registered."
+  warn "Install manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"
+fi
 
 # ── Done ───────────────────────────────────────────────
 echo ""
