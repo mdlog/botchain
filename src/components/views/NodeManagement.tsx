@@ -693,31 +693,31 @@ export function NodeManagement() {
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl bg-surface-container-low shadow-sm">
-                <div className="grid grid-cols-12 gap-2 border-b border-outline-variant/10 bg-surface-container-lowest/50 p-4 font-mono text-xs font-semibold uppercase tracking-wider text-outline">
+                <div className="grid grid-cols-12 gap-4 border-b border-outline-variant/10 bg-surface-container-lowest/50 p-4 font-mono text-xs font-semibold uppercase tracking-wider text-outline">
                   <div className="col-span-2">Job ID</div>
-                  <div className="col-span-1">Node</div>
-                  <div className="col-span-1">Type</div>
-                  <div className="col-span-2">Consumer</div>
+                  <div className="col-span-2">Node</div>
+                  <div className="col-span-2">Type</div>
+                  <div className="col-span-1">Consumer</div>
                   <div className="col-span-1 text-center">Duration</div>
                   <div className="col-span-2 text-right">Payment</div>
-                  <div className="col-span-3 text-right">Actions</div>
+                  <div className="col-span-2 text-right">Actions</div>
                 </div>
 
                 {jobs.map((job, idx) => (
-                  <div key={idx} className="group grid grid-cols-12 items-center gap-2 border-t border-outline-variant/10 p-4 transition-colors hover:bg-surface-container-high/50">
+                  <div key={idx} className="group grid grid-cols-12 items-center gap-4 border-t border-outline-variant/10 p-4 transition-colors hover:bg-surface-container-high/50">
                     <div className="col-span-2">
                       <div className="font-mono text-sm text-on-surface">JOB #{job.jobId.toString()}</div>
                       <div className={`font-mono text-[10px] font-semibold uppercase ${JOB_COLORS[job.status]}`}>{JOB_LABELS[job.status]}</div>
                     </div>
-                    <div className="col-span-1 font-mono text-sm text-on-surface-variant">#{job.nodeId.toString()}</div>
-                    <div className="col-span-1 text-sm text-on-surface">{job.jobType}</div>
-                    <div className="col-span-2 font-mono text-xs text-on-surface-variant">{formatAddress(job.consumer as any)}</div>
+                    <div className="col-span-2 font-mono text-xs text-on-surface-variant truncate">#{job.nodeId.toString()}</div>
+                    <div className="col-span-2 text-sm text-on-surface truncate">{job.jobType}</div>
+                    <div className="col-span-1 font-mono text-xs text-on-surface-variant">{formatAddress(job.consumer as any)}</div>
                     <div className="col-span-1 text-center font-mono text-sm text-on-surface-variant">{job.durationHours.toString()}h</div>
                     <div className="col-span-2 text-right">
                       <div className="font-mono text-sm text-primary">{formatBOT(BigInt(job.pricePerHourWei) * BigInt(job.durationHours))}</div>
                       <div className="font-mono text-[10px] uppercase text-outline">DGRAM total</div>
                     </div>
-                    <div className="col-span-3 flex justify-end">
+                    <div className="col-span-2 flex justify-end">
                       {job.status === 0 && (
                         <button
                           onClick={() => handleAcceptJob(job.jobId)}
