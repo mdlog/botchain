@@ -51,7 +51,8 @@ read_and_store_key() {
     echo ""
     echo -e "${B}Enter your provider private key (input hidden):${N}"
     # Silent read — key is NOT echoed to terminal
-    read -rs KEY
+    # Use /dev/tty because stdin is consumed by curl in pipe mode
+    read -rs KEY < /dev/tty
     echo ""
     if [[ -z "$KEY" ]]; then
       err "Private key required."
@@ -163,7 +164,7 @@ node cli.js setup || { err "Setup failed!"; exit 1; }
 step "Step 5/5: Compute Agent"
 
 echo ""
-read -rp "$(echo -e ${B}'Start compute agent now? [y/N]: '${N})" START_AGENT
+read -rp "$(echo -e ${B}'Start compute agent now? [y/N]: '${N})" START_AGENT < /dev/tty
 
 if [[ "${START_AGENT:-}" =~ ^[Yy]$ ]]; then
   info "Downloading compute agent..."
