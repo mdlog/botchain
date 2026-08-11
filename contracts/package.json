@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "sync-abis": "hardhat run scripts/sync-abis.ts",
     "seed:demo": "hardhat run scripts/seed-demo.ts --network botchain-testnet",
+    "attest": "hardhat run scripts/attest.ts --network botchain-testnet",
+    "attest:mainnet": "hardhat run scripts/attest.ts --network botchain-mainnet",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network botchain-testnet",
     "verify:testnet": "hardhat verify --network botchain-testnet",
     "deploy:mainnet": "hardhat run scripts/deploy.ts --network botchain-mainnet",

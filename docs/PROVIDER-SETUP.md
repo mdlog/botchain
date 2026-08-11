@@ -54,14 +54,19 @@ attest itself would make the "verified" badge meaningless, and that badge is the
 and CIF minting — it is the basis of the whole RWA claim.
 
 So your node comes up **Active, awaiting attestation**. Send your node id to whoever holds the
-verifier key; they run:
+verifier key. They attest it from the contracts workspace:
 
 ```bash
-node cli.js verify <node-id>
+cd contracts
+NODE_ID=<node-id> npm run attest        # REVOKE=1 to withdraw an attestation
 ```
 
-Running it yourself simulates first and tells you it was rejected, without sending a transaction or
-spending gas. Check who the verifier is with `node cli.js status`.
+That reads the verifier key from `contracts/.env` (mode 600) and simulates before sending, so a
+wallet that is not the verifier is told so for free. Do not pass a private key on the command line:
+it lands in your shell history and is readable by any other user through `/proc/<pid>/cmdline`.
+
+Running `node cli.js verify <node-id>` as a provider also fails safely — it simulates first and
+sends nothing. Check who the verifier is with `node cli.js status`.
 
 ## Manual setup
 

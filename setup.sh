@@ -839,7 +839,8 @@ step "Attestation"
 # provider can flip their own `verified` flag has no trust anchor at all.
 info "Your node is registered and Active, but NOT yet verified."
 sub "Verification is performed by the registry verifier — providers cannot attest to their own hardware."
-sub "The verifier runs: node cli.js verify <nodeId>   (with the verifier key in PROVIDER_PRIVATE_KEY)"
+sub "The verifier attests it from the contracts workspace: NODE_ID=<nodeId> npm run attest"
+sub "That reads the verifier key from contracts/.env — never pass a key on the command line, it lands in shell history and /proc"
 sub "Find your node id and current state: cd $INSTALL_DIR && node cli.js mine"
 
 # ── Auto-start on boot ─────────────────────────────────
