@@ -1,208 +1,209 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import {IComputeIndexFund} from "./interfaces/IComputeIndexFund.sol";
+import {IComputeRegistry} from "./interfaces/IComputeRegistry.sol";
 
 /**
  * @title ComputeIndexToken (CIF)
- * @notice ERC20 token representing fractional ownership of compute revenue
- *         from registered GPU clusters on BOT Chain DePIN network.
+ * @notice ERC20 share of the revenue produced by verified GPU clusters on the
+ *         BOT Chain DePIN network — the project's core RWA primitive.
  *
- *         Providers deposit BOT revenue → mint CIF tokens.
- *         CIF tokens are tradeable on BDEX.
- *         Holders earn yield from compute jobs.
- *
- *         This is the core RWA primitive — tokenized real-world compute assets.
+ *         Providers deposit revenue their node has actually settled and receive
+ *         CIF at the current index price. The marketplace routes a protocol cut
+ *         of every settlement into the same backing pool without minting, which
+ *         is what makes a share worth more than the BOT that created it.
+ * @dev Deposits are capped at the node's on-chain `totalRevenue` so shares can
+ *      only ever be created against compute work the marketplace has settled;
+ *      minting freely from faucet balance would make the index a token sale.
  */
+contract ComputeIndexToken is IComputeIndexFund, ERC20, Ownable, ReentrancyGuard {
+    // ── Errors ─────────────────────────────────────────────
+    error ExceedsSettledRevenue(uint256 settledRevenue, uint256 requested);
+    error InsufficientShares(uint256 balance, uint256 requested);
+    error NoFeesToSweep();
+    error NodeNotVerified();
+    error NotMarketplace();
+    error NotNodeProvider();
+    error TransferFailed();
+    error ZeroAddress();
+    error ZeroAmount();
 
-interface IComputeRegistry {
-    enum NodeStatus { Inactive, Active, Busy, Offline }
-
-    struct GpuSpecs {
-        string model;
-        uint16 vramGB;
-        uint16 tflops;
-        string region;
-    }
-
-    struct ComputeNode {
-        address provider;
-        GpuSpecs specs;
-        NodeStatus status;
-        uint96 totalRevenue;
-        uint64 registeredAt;
-        uint64 lastHeartbeat;
-        bool verified;
-    }
-
-    function getNode(uint64 nodeId) external view returns (ComputeNode memory);
-    function addRevenue(uint64 nodeId, uint96 amount) external;
-}
-
-interface IPriceOracle {
-    function getPrice(string calldata model)
-        external
-        view
-        returns (uint256 pricePerHourWei, uint64 updatedAt, uint16 confidence);
-}
-
-contract ComputeIndexToken {
-    // ── ERC20 State ────────────────────────────────────────
-    string public constant name = "Compute Index Fund";
-    string public constant symbol = "CIF";
-    uint8 public constant decimals = 18;
-    uint256 public totalSupply;
-
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    // ── RWA State ──────────────────────────────────────────
-    IComputeRegistry public registry;
-    IPriceOracle public oracle;
-
+    // ── Types ──────────────────────────────────────────────
     struct Deposit {
-        uint64 nodeId;          // which node backs this deposit
-        uint256 amountWei;     // BOT deposited
-        uint256 mintedTokens;  // CIF tokens minted
+        uint64 nodeId; // which node backs this deposit
+        uint256 amountWei; // BOT deposited
+        uint256 mintedTokens; // CIF shares minted
         uint64 depositedAt;
     }
 
+    // ── Constants ──────────────────────────────────────────
+
+    /// @dev 0.5% redemption fee, retained for the protocol treasury.
+    uint16 public constant WITHDRAW_FEE_BPS = 50;
+
+    // ── Storage ────────────────────────────────────────────
+    IComputeRegistry public immutable registry;
+
+    address public marketplace;
+
     mapping(address => Deposit[]) public deposits;
     mapping(address => uint256) public totalDeposited;
+    mapping(uint64 => uint256) public depositedPerNode;
 
-    // Index tracks — average yield across all deposited nodes
-    uint256 public totalValueLocked;   // total BOT deposited
-    uint256 public totalNodesBacked;   // unique nodes with deposits
+    uint256 public totalValueLocked; // BOT backing the outstanding shares
+    uint256 public accruedFees; // redemption fees, not part of the backing
+    uint256 public totalNodesBacked; // unique nodes with at least one deposit
 
     // ── Events ─────────────────────────────────────────────
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
     event Deposited(address indexed provider, uint64 indexed nodeId, uint256 amountWei, uint256 mintedTokens);
-    event Withdrawn(address indexed provider, uint256 amountWei, uint256 burnedTokens);
+    event Withdrawn(address indexed holder, uint256 amountWei, uint256 burnedTokens, uint256 feeWei);
+    event RevenueReceived(address indexed from, uint256 amountWei);
+    event FeesSwept(address indexed to, uint256 amountWei);
+    event MarketplaceSet(address indexed marketplace);
 
     // ── Constructor ────────────────────────────────────────
-    constructor(address _registry, address _oracle) {
-        registry = IComputeRegistry(_registry);
-        oracle = IPriceOracle(_oracle);
+    constructor(address registry_) ERC20("Compute Index Fund", "CIF") Ownable(msg.sender) {
+        if (registry_ == address(0)) revert ZeroAddress();
+        registry = IComputeRegistry(registry_);
     }
 
     // ── RWA Functions ──────────────────────────────────────
 
     /**
-     * @notice Provider deposits BOT revenue to mint CIF tokens.
-     *         The node must be registered and verified.
-     *         Mint amount = deposit * issuanceRatio (based on node revenue & AI valuation).
-     * @param nodeId The compute node backing this deposit
+     * @notice Deposit revenue a verified node has already settled and mint CIF.
+     * @dev Shares are minted at the live index price, so a deposit made after the
+     *      fund has appreciated does not dilute existing holders.
+     * @param nodeId The compute node backing this deposit.
+     * @return minted CIF shares issued to the caller.
      */
-    function depositRevenue(uint64 nodeId) external payable returns (uint256 minted) {
-        require(msg.value > 0, "Must deposit BOT");
+    function depositRevenue(uint64 nodeId) external payable nonReentrant returns (uint256 minted) {
+        if (msg.value == 0) revert ZeroAmount();
 
         IComputeRegistry.ComputeNode memory node = registry.getNode(nodeId);
-        require(node.provider == msg.sender, "Not the node provider");
-        require(node.verified, "Node not verified");
+        if (node.provider != msg.sender) revert NotNodeProvider();
+        if (!node.verified) revert NodeNotVerified();
 
-        // Simple minting: 1:1 ratio for MVP (1 BOT = 1 CIF)
-        // In production, AI engine determines ratio based on:
-        //   - Node historical revenue
-        //   - GPU model depreciation
-        //   - Market demand
-        //   - Risk score
-        minted = msg.value;
+        uint256 depositedForNode = depositedPerNode[nodeId];
+        uint256 newTotal = depositedForNode + msg.value;
+        if (newTotal > node.totalRevenue) revert ExceedsSettledRevenue(node.totalRevenue, newTotal);
+
+        uint256 supply = totalSupply();
+        uint256 backing = totalValueLocked;
+        minted = (supply == 0 || backing == 0) ? msg.value : (msg.value * supply) / backing;
+
+        if (depositedForNode == 0) totalNodesBacked++;
+        depositedPerNode[nodeId] = newTotal;
+        totalDeposited[msg.sender] += msg.value;
+        totalValueLocked = backing + msg.value;
+
+        deposits[msg.sender].push(
+            Deposit({nodeId: nodeId, amountWei: msg.value, mintedTokens: minted, depositedAt: uint64(block.timestamp)})
+        );
 
         _mint(msg.sender, minted);
-
-        deposits[msg.sender].push(Deposit({
-            nodeId: nodeId,
-            amountWei: msg.value,
-            mintedTokens: minted,
-            depositedAt: uint64(block.timestamp)
-        }));
-
-        totalDeposited[msg.sender] += msg.value;
-        totalValueLocked += msg.value;
 
         emit Deposited(msg.sender, nodeId, msg.value, minted);
     }
 
     /**
-     * @notice Burn CIF tokens to withdraw BOT (minus small withdrawal fee).
-     * @param amount Amount of CIF tokens to burn.
+     * @notice Burn CIF shares and redeem the backing they represent, less the fee.
+     * @param amount CIF shares to burn.
+     * @return payout BOT paid to the caller in wei.
      */
-    function withdraw(uint256 amount) external returns (uint256 payout) {
-        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+    function withdraw(uint256 amount) external nonReentrant returns (uint256 payout) {
+        if (amount == 0) revert ZeroAmount();
+        uint256 balance = balanceOf(msg.sender);
+        if (balance < amount) revert InsufficientShares(balance, amount);
 
-        // 0.5% withdrawal fee (stays in protocol)
-        uint256 fee = amount * 50 / 10000;
-        payout = amount - fee;
+        uint256 gross = (amount * totalValueLocked) / totalSupply();
+        uint256 fee = (gross * WITHDRAW_FEE_BPS) / 10_000;
+        payout = gross - fee;
 
         _burn(msg.sender, amount);
+        totalValueLocked -= gross;
+        accruedFees += fee;
 
-        (bool ok, ) = msg.sender.call{value: payout}("");
-        require(ok, "Withdrawal failed");
+        (bool ok,) = msg.sender.call{value: payout}("");
+        if (!ok) revert TransferFailed();
 
-        // TVL decreases by full amount (fee becomes protocol revenue)
-        totalValueLocked -= amount;
+        emit Withdrawn(msg.sender, payout, amount, fee);
+    }
 
-        emit Withdrawn(msg.sender, payout, amount);
+    /**
+     * @notice Add protocol revenue to the index backing without minting new shares.
+     * @dev This is the only path that moves getIndexPrice() above par; deposits
+     *      mint at price and therefore leave it unchanged.
+     */
+    function receiveRevenue() external payable {
+        if (msg.sender != marketplace) revert NotMarketplace();
+        if (msg.value == 0) revert ZeroAmount();
+
+        totalValueLocked += msg.value;
+
+        emit RevenueReceived(msg.sender, msg.value);
+    }
+
+    // ── Admin ──────────────────────────────────────────────
+
+    /**
+     * @notice Authorize the marketplace allowed to push protocol revenue.
+     * @param newMarketplace ComputeMarketplace address.
+     */
+    function setMarketplace(address newMarketplace) external onlyOwner {
+        if (newMarketplace == address(0)) revert ZeroAddress();
+        marketplace = newMarketplace;
+        emit MarketplaceSet(newMarketplace);
+    }
+
+    /**
+     * @notice Sweep accumulated redemption fees to the protocol treasury.
+     * @param to Recipient of the fees.
+     * @return amount Wei swept.
+     */
+    function sweepFees(address to) external onlyOwner nonReentrant returns (uint256 amount) {
+        if (to == address(0)) revert ZeroAddress();
+        amount = accruedFees;
+        if (amount == 0) revert NoFeesToSweep();
+        accruedFees = 0;
+
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert TransferFailed();
+
+        emit FeesSwept(to, amount);
     }
 
     // ── View Functions ─────────────────────────────────────
 
+    /**
+     * @notice Every deposit a provider has made.
+     * @param provider Provider address.
+     * @return The provider's deposit history.
+     */
     function getDeposits(address provider) external view returns (Deposit[] memory) {
         return deposits[provider];
     }
 
+    /**
+     * @notice Number of deposits a provider has made.
+     * @param provider Provider address.
+     * @return Deposit count.
+     */
     function getDepositCount(address provider) external view returns (uint256) {
         return deposits[provider].length;
     }
 
+    /**
+     * @notice BOT backing one CIF share, scaled by 1e18.
+     * @return Index price; par (1e18) while no shares are outstanding.
+     */
     function getIndexPrice() external view returns (uint256) {
-        if (totalSupply == 0) return 0;
-        return (totalValueLocked * 1e18) / totalSupply;
+        uint256 supply = totalSupply();
+        if (supply == 0) return 1e18;
+        return (totalValueLocked * 1e18) / supply;
     }
-
-    // ── Internal ERC20 ─────────────────────────────────────
-
-    function _mint(address to, uint256 amount) internal {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-
-    function _burn(address from, uint256 amount) internal {
-        balanceOf[from] -= amount;
-        totalSupply -= amount;
-        emit Transfer(from, address(0), amount);
-    }
-
-    // ── ERC20 Standard ─────────────────────────────────────
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        _transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        uint256 allowed = allowance[from][msg.sender];
-        require(allowed >= amount, "Insufficient allowance");
-        if (allowed != type(uint256).max) {
-            allowance[from][msg.sender] = allowed - amount;
-        }
-        _transfer(from, to, amount);
-        return true;
-    }
-
-    function _transfer(address from, address to, uint256 amount) internal {
-        require(balanceOf[from] >= amount, "Insufficient balance");
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
-    }
-
-    // ── Receive ────────────────────────────────────────────
-    receive() external payable {}
 }

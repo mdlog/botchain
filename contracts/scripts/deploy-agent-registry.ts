@@ -1,31 +1,22 @@
-import pkg from "hardhat";
+import pkg from 'hardhat';
+
+import { deployContract, readDeployments, run, writeDeployments } from './common.ts';
+
 const { ethers } = pkg;
 
-async function main() {
+async function main(): Promise<void> {
   const [deployer] = await ethers.getSigners();
-  console.log("Deploying AgentRegistry with account:", deployer.address);
+  console.log('Deploying AgentRegistry with account:', deployer.address);
 
-  const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
-  const registry = await AgentRegistry.deploy();
-  await registry.waitForDeployment();
-  const addr = await registry.getAddress();
-  console.log("✅ AgentRegistry deployed:", addr);
+  const registry = await deployContract('AgentRegistry');
+  const address = await registry.getAddress();
+  console.log('AgentRegistry deployed:', address);
 
-  // Write to deployments.json (merge existing)
-  const fs = require("fs");
-  const path = require("path");
-  const deploymentPath = path.resolve(__dirname, "../deployments.json");
-  let existing: any = {};
-  if (fs.existsSync(deploymentPath)) {
-    existing = JSON.parse(fs.readFileSync(deploymentPath, "utf8"));
-  }
-  existing.contracts = { ...(existing.contracts || {}), AgentRegistry: addr };
-  existing.deployedAt = new Date().toISOString();
-  fs.writeFileSync(deploymentPath, JSON.stringify(existing, null, 2));
-  console.log("Updated deployments.json");
+  const deployments = readDeployments();
+  deployments.contracts = { ...deployments.contracts, AgentRegistry: address };
+  deployments.deployedAt = new Date().toISOString();
+  writeDeployments(deployments);
+  console.log('Updated deployments.json');
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+run(main);

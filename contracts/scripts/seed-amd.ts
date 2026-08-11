@@ -1,22 +1,26 @@
-const hre = require("hardhat");
+import pkg from 'hardhat';
 
-async function main() {
-  const deployments = require("../deployments.json");
-  const oracle = await hre.ethers.getContractAt("PriceOracle", deployments.contracts.PriceOracle);
+import { attachContract, readDeployments, requireAddress, run } from './common.ts';
 
-  // Step 1: Add benchmark (must be owner)
-  const benchTx = await oracle.setBenchmark("AMD Radeon GPU", 1200);
-  await benchTx.wait();
-  console.log("✅ Benchmark set for AMD Radeon GPU");
+const { ethers } = pkg;
 
-  // Step 2: Update price (must be operator — owner is operator by default)
-  const priceTx = await oracle.updatePrice("AMD Radeon GPU", hre.ethers.parseEther("0.12"), 8500);
-  await priceTx.wait();
-  console.log("✅ Price set: 0.12 DGRAM/hr, confidence 85%");
+const MODEL = 'AMD Radeon GPU';
+const PRICE = '0.12';
+const CONFIDENCE = 8500;
 
-  // Verify
-  const [price, updatedAt, confidence] = await oracle.getPrice("AMD Radeon GPU");
-  console.log("Verify:", hre.ethers.formatEther(price), "DGRAM/hr, confidence:", Number(confidence));
+async function main(): Promise<void> {
+  const deployments = readDeployments();
+  const oracle = await attachContract('PriceOracle', requireAddress(deployments, 'PriceOracle'));
+
+  await (await oracle.setBenchmark(MODEL, 2500)).wait();
+  console.log('Benchmark set for', MODEL);
+
+  await (await oracle.updatePrice(MODEL, ethers.parseEther(PRICE), CONFIDENCE)).wait();
+
+  const [price, , confidence] = await oracle.getPrice(MODEL);
+  console.log(
+    `${MODEL}: ${ethers.formatEther(price)} DGRAM/hr, confidence ${Number(confidence) / 100}%`,
+  );
 }
 
-main().catch(console.error);
+run(main);

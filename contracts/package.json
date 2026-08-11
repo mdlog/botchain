@@ -1,21 +1,25 @@
 {
-  "name": "computerwa-contracts",
+  "name": "botcompute-contracts",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "compile": "hardhat compile",
+    "test": "hardhat test",
+    "typecheck": "tsc --noEmit",
+    "sync-abis": "hardhat run scripts/sync-abis.ts",
+    "seed:demo": "hardhat run scripts/seed-demo.ts --network botchain-testnet",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network botchain-testnet",
-    "deploy:mainnet": "hardhat run scripts/deploy.ts --network botchain-mainnet",
-    "verify": "hardhat verify --network botchain-mainnet",
-    "typecheck": "tsc --noEmit"
+    "verify:testnet": "hardhat verify --network botchain-testnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.14.0",
+    "dotenv": "^16.6.1",
     "hardhat": "^2.22.0",
-    "typescript": "^5.8.0",
-    "@types/node": "^22.14.0"
+    "typescript": "^5.8.0"
   },
   "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
     "ethers": "^6.13.0"
   }
 }

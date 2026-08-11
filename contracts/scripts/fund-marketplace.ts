@@ -1,25 +1,35 @@
-const hre = require("hardhat");
+import pkg from 'hardhat';
 
-async function main() {
-  const deployments = require("../deployments.json");
-  const marketplaceAddr = deployments.contracts.ComputeMarketplace;
-  
-  // Send 0.2 DGRAM to contract so Job #4 can complete
-  const [signer] = await hre.ethers.getSigners();
-  console.log("Sender:", signer.address);
-  
-  const balance = await hre.ethers.provider.getBalance(signer.address);
-  console.log("Balance:", hre.ethers.formatEther(balance), "DGRAM");
-  
-  const tx = await signer.sendTransaction({
-    to: marketplaceAddr,
-    value: hre.ethers.parseEther("0.2"),
-  });
+import { readDeployments, requireAddress, run } from './common.ts';
+
+const { ethers } = pkg;
+
+/**
+ * Tops the marketplace up with spare DGRAM. Settlement is fully funded by each
+ * job's own escrow, so this is only ever needed to cover jobs created against an
+ * older deployment of the contract.
+ */
+const AMOUNT = process.env.FUND_AMOUNT ?? '0.2';
+
+async function main(): Promise<void> {
+  const [signer] = await ethers.getSigners();
+  const marketplace = requireAddress(readDeployments(), 'ComputeMarketplace');
+
+  console.log('Sender:', signer.address);
+  console.log(
+    'Balance:',
+    ethers.formatEther(await ethers.provider.getBalance(signer.address)),
+    'DGRAM',
+  );
+
+  const tx = await signer.sendTransaction({ to: marketplace, value: ethers.parseEther(AMOUNT) });
   await tx.wait();
-  console.log("✅ Sent 0.2 DGRAM to marketplace contract:", tx.hash);
-  
-  const contractBal = await hre.ethers.provider.getBalance(marketplaceAddr);
-  console.log("Contract balance now:", hre.ethers.formatEther(contractBal), "DGRAM");
+  console.log(`Sent ${AMOUNT} DGRAM to ${marketplace}:`, tx.hash);
+  console.log(
+    'Contract balance:',
+    ethers.formatEther(await ethers.provider.getBalance(marketplace)),
+    'DGRAM',
+  );
 }
 
-main().catch(console.error);
+run(main);

@@ -1,35 +1,29 @@
-const hre = require("hardhat");
+import pkg from 'hardhat';
 
-async function main() {
-  const [signer] = await hre.ethers.getSigners();
-  console.log("Signer:", signer.address);
+import { attachContract, readDeployments, requireAddress, run } from './common.ts';
 
-  const deployments = require("../deployments.json");
-  const oracleAddr = deployments.contracts.PriceOracle;
-  const oracle = await hre.ethers.getContractAt("PriceOracle", oracleAddr);
+const { ethers } = pkg;
 
-  // 1. Add RTX 3060 to benchmark whitelist
-  console.log("Adding RTX 3060 to benchmark whitelist...");
-  const benchTx = await oracle.setBenchmark("NVIDIA RTX 3060", 1500); // 15% above floor
-  await benchTx.wait();
-  console.log("✅ Benchmark set for RTX 3060");
+const MODEL = 'NVIDIA RTX 3060';
+const PRICE = '0.15';
+const CONFIDENCE = 8500;
 
-  // 2. Verify it's supported
-  const supported = await oracle.isSupported("NVIDIA RTX 3060");
-  console.log("Supported:", supported);
+async function main(): Promise<void> {
+  const [signer] = await ethers.getSigners();
+  console.log('Signer:', signer.address);
 
-  // 3. Seed price: 0.15 DGRAM/hr, 85% confidence
-  const priceTx = await oracle.updatePrice(
-    "NVIDIA RTX 3060",
-    hre.ethers.parseEther("0.15"),
-    8500
+  const deployments = readDeployments();
+  const oracle = await attachContract('PriceOracle', requireAddress(deployments, 'PriceOracle'));
+
+  await (await oracle.setBenchmark(MODEL, 3000)).wait();
+  console.log('Benchmark set for', MODEL, '— supported:', await oracle.isSupported(MODEL));
+
+  await (await oracle.updatePrice(MODEL, ethers.parseEther(PRICE), CONFIDENCE)).wait();
+
+  const [price, , confidence] = await oracle.getPrice(MODEL);
+  console.log(
+    `${MODEL}: ${ethers.formatEther(price)} DGRAM/hr, confidence ${Number(confidence) / 100}%`,
   );
-  await priceTx.wait();
-  console.log("✅ RTX 3060 price seeded: 0.15 DGRAM/hr (85% confidence)");
-
-  // 4. Verify
-  const price = await oracle.getPrice("NVIDIA RTX 3060");
-  console.log("Verified on-chain:", hre.ethers.formatEther(price.pricePerHourWei), "DGRAM/hr");
 }
 
-main().catch(console.error);
+run(main);
