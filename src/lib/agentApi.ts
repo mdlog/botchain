@@ -41,6 +41,30 @@ export class AgentError extends Error {
 }
 
 /**
+ * `fetch`, with a guard against the page's own `fetch` having been replaced.
+ *
+ * Wallet extensions monkey-patch `window.fetch` to intercept their own traffic,
+ * and at least one of them (Backpack, via `__backpackXnftFetch`) returns
+ * `undefined` for requests it does not handle instead of a Response or a
+ * rejection. Every consumer of this app runs a wallet extension by definition,
+ * so a broken `fetch` is an ordinary condition here, not an exotic one — and
+ * without this check it surfaced as "Cannot read properties of undefined
+ * (reading 'text')", which points nowhere.
+ */
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  const res: unknown = await fetch(url, init);
+  if (!(res instanceof Response)) {
+    throw new AgentError(
+      'A browser extension has replaced this page’s network layer and returned nothing for ' +
+        'the request. Disable wallet extensions for this site (Backpack is a known cause) or ' +
+        'open it in a profile without them.',
+      0,
+    );
+  }
+  return res;
+}
+
+/**
  * The agent answers with JSON on every path, including failures. Reading the
  * body before checking `res.ok` used to surface a JSON parse error instead of
  * the agent's actual message.
@@ -80,7 +104,7 @@ export async function executeOnAgent(
   code: string,
   auth: SignedAuth,
 ): Promise<ExecutionResult> {
-  const res = await fetch(`${agentUrl}/execute`, {
+  const res = await request(`${agentUrl}/execute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jobId: Number(jobId), language, code, auth }),
@@ -94,7 +118,7 @@ export async function acceptJobOnAgent(
   auth: SignedAuth,
 ): Promise<void> {
   await parse(
-    await fetch(`${agentUrl}/jobs/${jobId}/accept`, {
+    await request(`${agentUrl}/jobs/${jobId}/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auth }),
@@ -108,7 +132,7 @@ export async function completeJobOnAgent(
   auth: SignedAuth,
 ): Promise<void> {
   await parse(
-    await fetch(`${agentUrl}/jobs/${jobId}/complete`, {
+    await request(`${agentUrl}/jobs/${jobId}/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auth }),
@@ -143,7 +167,7 @@ export interface AgentInfo {
 
 export async function fetchAgentInfo(agentUrl: string): Promise<AgentInfo | null> {
   try {
-    return await parse<AgentInfo>(await fetch(`${agentUrl}/info`));
+    return await parse<AgentInfo>(await request(`${agentUrl}/info`));
   } catch {
     return null;
   }
