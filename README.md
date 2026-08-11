@@ -141,7 +141,10 @@ deployment.
 
 ## Quick start
 
-Requires Node.js 20.19+ and a wallet with testnet DGRAM.
+Requires Node.js 20.19+ for the frontend and **22.6+ for the contracts workspace** — its
+Hardhat scripts are ESM TypeScript that load through Node's native type stripping. CI runs the
+frontend on 20 and the contracts on 22 so both bounds stay honest. You also need a wallet with
+testnet DGRAM.
 
 ```bash
 git clone https://github.com/mdlog/botchain.git

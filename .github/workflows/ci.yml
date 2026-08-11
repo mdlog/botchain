@@ -42,9 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Hardhat scripts and tests are ESM .ts with explicit .ts imports, which
+      # only load under Node's native type stripping (22.6+). On 20 they fail with
+      # ERR_UNKNOWN_FILE_EXTENSION. The frontend job deliberately stays on 20 so
+      # CI keeps proving the lower bound the root package.json advertises.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: contracts/package-lock.json
 

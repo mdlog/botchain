@@ -2,6 +2,9 @@
   "name": "botcompute-contracts",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
