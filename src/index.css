@@ -1,56 +1,243 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
+/* ══════════════════════════════════════════════════════════════════
+   BotCompute design tokens
+   ──────────────────────────────────────────────────────────────────
+   Naming follows Material Design 3 roles (surface / on-surface /
+   outline), which the app already used. Values are retuned for a
+   dark compute console: a real elevation ramp, hairlines that
+   actually render, and status colors that stay legible at caption
+   size on near-black.
+   ══════════════════════════════════════════════════════════════════ */
 @theme {
-  --color-background: #10131a;
-  --color-surface: #10131a;
-  --color-surface-container-lowest: #0b0e14;
-  --color-surface-container-low: #191c22;
-  --color-surface-container: #1d2026;
-  --color-surface-container-high: #272a31;
-  --color-surface-container-highest: #32353c;
-  
-  --color-on-background: #e1e2eb;
-  --color-on-surface: #e1e2eb;
-  --color-on-surface-variant: #bec7d4;
-  
+  /* ── Elevation ramp ──────────────────────────────────────────────
+     Previously --color-background and --color-surface were the same
+     value, so cards never separated from the canvas. Each step is now
+     a visible ~4% lightness increment. */
+  --color-background: #0a0c11;
+  --color-surface: #0d1016;
+  --color-surface-container-lowest: #0a0c11;
+  --color-surface-container-low: #12151c;
+  --color-surface-container: #171b23;
+  --color-surface-container-high: #1e232d;
+  --color-surface-container-highest: #262c38;
+
+  /* ── Text ───────────────────────────────────────────────────────
+     Three distinct steps. `on-surface-variant` was #bec7d4 — near
+     enough to primary text that hierarchy collapsed. */
+  --color-on-background: #e6e9f0;
+  --color-on-surface: #e6e9f0;
+  --color-on-surface-variant: #9aa4b8;
+
+  /* ── Brand ──────────────────────────────────────────────────────
+     #98cbff is the logo blue and stays exactly as-is. */
   --color-primary: #98cbff;
-  --color-on-primary: #003354;
+  --color-on-primary: #06233c;
   --color-primary-container: #00a3ff;
   --color-primary-fixed: #cfe5ff;
   --color-primary-fixed-dim: #98cbff;
-  
-  --color-compute-active: #00FF41;
-  --color-compute-idle: #FFB800;
-  --color-compute-down: #FF4B4B;
-  
-  --color-outline: #88919d;
-  --color-outline-variant: #3f4852;
-  
-  --color-secondary-fixed: #72ff70;
-  --color-error: #ffb4ab;
-  --color-error-container: #93000a;
-  
-  --font-sans: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+
+  /* ── Status ─────────────────────────────────────────────────────
+     compute-active was #00FF41. Full-saturation green vibrates on
+     near-black at 10–13px and is the tell of a templated dashboard.
+     #35d97e carries the same meaning and stays readable at caption
+     size. The LED dots get their punch from a glow ring instead
+     (see .signal-dot below). */
+  --color-compute-active: #35d97e;
+  --color-compute-idle: #f5b544;
+  --color-compute-down: #ff6b6b;
+
+  /* Semantic aliases so views can say what they mean. */
+  --color-success: #35d97e;
+  --color-warning: #f5b544;
+  --color-danger: #ff6b6b;
+
+  /* ── Lines ──────────────────────────────────────────────────────
+     Borders were written as `border-outline-variant/10`, i.e. 10%
+     of #3f4852 on near-black — invisible. These render at full
+     opacity, so `border-outline-variant` is a real hairline. */
+  --color-outline: #6b7688;
+  --color-outline-variant: #262c38;
+  /* Used across Marketplace/ComputeSession but never defined before,
+     which silently removed those borders. */
+  --color-surface-glass: #1e232d;
+
+  --color-secondary-fixed: #7ee7a8;
+  --color-error: #ff8b8b;
+  --color-error-container: #4a1414;
+
+  /* ── Type scale ─────────────────────────────────────────────────
+     Replaces the previous 9/10/12/16px soup. `eyebrow` is the only
+     small size — nothing should render below 11px. */
+  --text-eyebrow: 0.6875rem; /* 11px */
+  --text-eyebrow--line-height: 1.3;
+  --text-eyebrow--letter-spacing: 0.08em;
+  --text-eyebrow--font-weight: 600;
+
+  --text-caption: 0.75rem; /* 12px */
+  --text-caption--line-height: 1.45;
+
+  --text-label: 0.8125rem; /* 13px */
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 500;
+
+  --text-body: 0.875rem; /* 14px */
+  --text-body--line-height: 1.55;
+
+  --text-subtitle: 0.9375rem; /* 15px */
+  --text-subtitle--line-height: 1.4;
+  --text-subtitle--font-weight: 600;
+
+  --text-title: 1.125rem; /* 18px */
+  --text-title--line-height: 1.3;
+  --text-title--letter-spacing: -0.01em;
+  --text-title--font-weight: 600;
+
+  --text-display: 1.75rem; /* 28px */
+  --text-display--line-height: 1.15;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 600;
+
+  --text-metric: 1.5rem; /* 24px — KPI values */
+  --text-metric--line-height: 1.1;
+  --text-metric--font-weight: 600;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 @layer base {
-  html, body {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  html,
+  body {
     margin: 0;
     padding: 0;
     overscroll-behavior: none;
     background-color: var(--color-background);
     color: var(--color-on-background);
-    background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.02) 1px, transparent 0);
-    background-size: 24px 24px;
+    /* Faint dot grid — part of the console identity, dialled back so
+       it reads as texture rather than pattern. */
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      rgba(230, 233, 240, 0.035) 1px,
+      transparent 0
+    );
+    background-size: 28px 28px;
+    background-attachment: fixed;
     font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  button:not(:disabled) {
+  /* Numbers must not reflow as they tick. Every countdown, balance
+     and KPI in this app is a changing number. */
+  .font-mono,
+  code,
+  pre,
+  kbd,
+  samp {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings:
+      'tnum' 1,
+      'zero' 1;
+  }
+
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
     cursor: pointer;
   }
 
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Keyboard focus must be visible. There was no focus style at all. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Native controls should inherit the dark surface, not the OS light
+     default (previously `select` options rendered white-on-white in
+     some browsers). */
+  select option {
+    background-color: var(--color-surface-container);
+    color: var(--color-on-surface);
+  }
+
+  /* Scrollbars were hidden globally with `display: none`, which
+     removes the only cue that a region scrolls. Slim and styled
+     instead of absent. */
   ::-webkit-scrollbar {
-    display: none;
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-surface-container-highest);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-outline);
+    background-clip: content-box;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-container-highest) transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Status LED. The glow ring is what makes a 6px dot read as "live"
+     — it replaces the raw saturation the old #00FF41 relied on. */
+  .signal-dot {
+    position: relative;
+    display: inline-block;
+    height: 0.5rem;
+    width: 0.5rem;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background-color: currentColor;
+  }
+  .signal-dot--live::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    background-color: currentColor;
+    opacity: 0.25;
+    animation: signal-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes signal-pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.05;
+      transform: scale(1.5);
+    }
   }
 }

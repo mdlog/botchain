@@ -1,20 +1,51 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { motion } from 'motion/react';
+import { useEffect, useMemo, useState } from 'react';
+import { motion, type Variants } from 'motion/react';
 import {
-  BarChart, Bar, PieChart, Pie, Cell,
-  RadialBarChart, RadialBar,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  RadialBarChart,
+  RadialBar,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 import {
-  TrendingUp, Cpu, Activity, ShieldCheck,
-  MapPin, Zap, DollarSign, Server, BarChart3,
-  CheckCircle2, Wallet, Layers, Globe, User,
+  TrendingUp,
+  Cpu,
+  Activity,
+  ShieldCheck,
+  MapPin,
+  Zap,
+  DollarSign,
+  Server,
+  BarChart3,
+  CheckCircle2,
+  Layers,
+  Globe,
+  User,
+  PieChart as PieIcon,
 } from 'lucide-react';
+import { PageShell, PageHeader, SectionHeader } from '@/components/layout/PageShell';
+import { Card } from '@/components/ui/Card';
+import { Stat } from '@/components/ui/Stat';
+import { Badge, StatusDot } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SkeletonStats, Skeleton } from '@/components/ui/Skeleton';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
 import { useComputeIndexToken } from '@/hooks/useComputeIndexToken';
-import { formatBOT, formatBOTCompact, timeAgo, formatAddress } from '@/lib/format';
+import { formatBOTCompact, timeAgo, formatNodeId } from '@/lib/format';
+
+// Format aggregate compute power (TFLOPS) into a compact human label.
+function formatTflops(tflops: number): { value: string; unit: string } {
+  if (tflops >= 1000) return { value: (tflops / 1000).toFixed(2), unit: 'PFLOPS' };
+  return { value: tflops.toString(), unit: 'TFLOPS' };
+}
 
 // ── Types ────────────────────────────────────────────────
 interface NodeInfo {
@@ -33,85 +64,73 @@ interface NodeInfo {
 
 // ── Constants ────────────────────────────────────────────
 const STATUS_LABELS = ['Inactive', 'Active', 'Busy', 'Offline'];
-const STATUS_COLORS = ['#FFB800', '#00FF41', '#98cbff', '#FF4B4B'];
-const STATUS_BG = [
-  'bg-compute-idle/15 text-compute-idle',
-  'bg-compute-active/15 text-compute-active',
-  'bg-primary/15 text-primary',
-  'bg-compute-down/15 text-compute-down',
-];
+// Inactive reads as dormant, not as a warning — it gets the neutral tone
+// rather than the amber it used to share with "needs attention" states.
+const STATUS_COLORS = ['#6b7688', '#35d97e', '#98cbff', '#ff6b6b'];
+const STATUS_TONES = ['neutral', 'success', 'accent', 'danger'] as const;
 
 // ── Animation variants ───────────────────────────────────
-const containerStagger = {
+const containerStagger: Variants = {
   hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
+  show: { opacity: 1, transition: { staggerChildren: 0.05, delayChildren: 0.05 } },
 };
-const fadeInUp = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
+const fadeInUp: Variants = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
 };
-const scaleIn = {
-  hidden: { opacity: 0, scale: 0.95 },
-  show: { opacity: 1, scale: 1, transition: { duration: 0.35, ease: 'easeOut' } },
-};
-
-// ── Section Header ───────────────────────────────────────
-function SectionHeader({ icon: Icon, title, subtitle }: { icon: React.ElementType; title: string; subtitle?: string }) {
-  return (
-    <div className="mb-4 flex items-center gap-2.5">
-      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-container-high">
-        <Icon className="h-3.5 w-3.5 text-primary" />
-      </div>
-      <div>
-        <h2 className="text-sm font-bold text-on-background">{title}</h2>
-        {subtitle && <p className="text-[10px] text-on-surface-variant">{subtitle}</p>}
-      </div>
-    </div>
-  );
-}
-
-// ── Mini Stat Card ───────────────────────────────────────
-function StatCard({ label, value, sublabel, icon: Icon, accent }: {
-  label: string; value: string; sublabel?: string; icon: React.ElementType; accent: string;
-}) {
-  return (
-    <motion.div variants={fadeInUp} className="relative overflow-hidden rounded-xl bg-surface-container-low p-3">
-      <div className="flex items-start justify-between">
-        <div className="min-w-0 flex-1">
-          <span className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-wider text-outline">{label}</span>
-          <span className={`block font-mono text-lg font-bold leading-tight ${accent}`}>{value}</span>
-          {sublabel && <span className="mt-0.5 block font-mono text-[9px] text-outline">{sublabel}</span>}
-        </div>
-        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-black/20 ${accent}`}>
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-      </div>
-    </motion.div>
-  );
-}
 
 // ── Chart tooltip ────────────────────────────────────────
-function ChartTooltip({ active, payload, label }: any) {
+/** Recharts hands the tooltip one entry per rendered series. */
+interface TooltipEntry {
+  name?: string | number;
+  value?: string | number;
+  color?: string;
+  fill?: string;
+}
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: TooltipEntry[];
+  label?: string | number;
+}) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 shadow-xl">
-      {label && <p className="mb-1 font-mono text-[10px] font-semibold text-outline">{label}</p>}
-      {payload.map((p: any, i: number) => (
-        <p key={i} className="font-mono text-xs text-on-surface">
-          <span className="inline-block h-2 w-2 rounded-full mr-1.5" style={{ backgroundColor: p.color || p.fill }} />
-          {p.name}: <span className="font-semibold">{p.value}</span>
+    <div className="rounded-lg border border-outline-variant bg-surface-container px-3 py-2 shadow-xl shadow-black/40">
+      {label !== undefined && (
+        <p className="mb-1 font-mono text-caption text-on-surface-variant">{label}</p>
+      )}
+      {payload.map((entry, i) => (
+        <p key={i} className="flex items-center gap-1.5 font-mono text-caption text-on-surface">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: entry.color ?? entry.fill }}
+          />
+          {entry.name}: <span className="font-semibold">{entry.value}</span>
         </p>
       ))}
     </div>
   );
 }
 
+const AXIS_TICK = { fontSize: 11, fill: '#6b7688', fontFamily: 'JetBrains Mono' };
+
 // ── Main Component ───────────────────────────────────────
 export function Dashboard() {
   const { address } = useWalletContext();
-  const { getProviderNodes, getNode, getProviderRevenue, getTotalActiveNodes } = useComputeRegistry();
-  const { getTotalJobs, getTotalVolume, getAllJobCounts, getCompletedJobStats } = useComputeMarketplace();
-  const { getTVL, getTotalSupply, getBalance } = useComputeIndexToken();
+  const {
+    getProviderNodes,
+    getNode,
+    getProviderRevenue,
+    getTotalActiveNodes,
+    getGlobalComputePower,
+  } = useComputeRegistry();
+  const { getTotalJobs, getTotalVolume, getAllJobCounts, getCompletedJobStats } =
+    useComputeMarketplace();
+  const { getTVL, getTotalSupply } = useComputeIndexToken();
 
   const [loading, setLoading] = useState(true);
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
@@ -121,8 +140,8 @@ export function Dashboard() {
   const [totalVolume, setTotalVolume] = useState(0n);
   const [tvl, setTvl] = useState(0n);
   const [cifSupply, setCifSupply] = useState(0n);
-  const [cifBalance, setCifBalance] = useState(0n);
-  const [jobCounts, setJobCounts] = useState<Map<string, number>>(new Map());
+  const [totalTflops, setTotalTflops] = useState(0);
+  const [totalVram, setTotalVram] = useState(0);
   const [completedStats, setCompletedStats] = useState<{
     perNode: Map<string, number>;
     perType: Map<string, number>;
@@ -130,8 +149,8 @@ export function Dashboard() {
   }>({ perNode: new Map(), perType: new Map(), total: 0 });
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
+    async function loadData(showLoading = false) {
+      if (showLoading) setLoading(true);
       try {
         // ── Global network data (always load) ──
         const [activeCount, jobsCount, volume, tvlVal, supply] = await Promise.all([
@@ -147,27 +166,36 @@ export function Dashboard() {
         setTvl(tvlVal);
         setCifSupply(supply);
 
+        // ── Global compute power: aggregate TFLOPS + VRAM across all nodes ──
+        // Node IDs are hash-derived (not sequential), so the hook reads
+        // NodeRegistered logs to enumerate real IDs, then sums each node's specs.
+        try {
+          const power = await getGlobalComputePower();
+          setTotalTflops(power.tflops);
+          setTotalVram(power.vram);
+        } catch (err) {
+          console.error('[Dashboard] Compute power aggregation failed:', err);
+        }
+
         // ── Personal provider data (only if wallet connected) ──
         if (address) {
-          const [nodeIds, revenue, bal] = await Promise.all([
+          const [nodeIds, revenue] = await Promise.all([
             getProviderNodes(address),
             getProviderRevenue(address),
-            getBalance(address),
           ]);
           setTotalRevenue(revenue);
-          setCifBalance(bal);
 
-          const [jc, completed] = await Promise.all([
-            getAllJobCounts(),
-            getCompletedJobStats(),
-          ]);
-          setJobCounts(jc);
-          setCompletedStats({ perNode: completed.perNode, perType: completed.perType, total: completed.total });
+          const [jc, completed] = await Promise.all([getAllJobCounts(), getCompletedJobStats()]);
+          setCompletedStats({
+            perNode: completed.perNode,
+            perType: completed.perType,
+            total: completed.total,
+          });
 
           const nodeDetails: NodeInfo[] = [];
           for (const id of nodeIds.slice(0, 10)) {
             try {
-              const node = await getNode(id) as any;
+              const node = await getNode(id);
               if (node) {
                 nodeDetails.push({
                   nodeId: id,
@@ -183,207 +211,476 @@ export function Dashboard() {
                   completedJobs: completed.perNode.get(id.toString()) ?? 0,
                 });
               }
-            } catch {}
+            } catch (err) {
+              // One unreadable node must not blank the whole dashboard.
+              console.warn('[Dashboard] skipping node', id.toString(), err);
+            }
           }
           setNodes(nodeDetails);
         }
       } catch (err) {
         console.error('[Dashboard] Load failed:', err);
       } finally {
-        setLoading(false);
+        if (showLoading) setLoading(false);
       }
     }
-    loadData();
+
+    // Initial load with loading placeholders
+    void loadData(true);
+
+    // ── Optional auto-refresh polling honoring Settings preference ──
+    const refreshInterval = Number(localStorage.getItem('botchain-refresh-interval') ?? 0);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    if (refreshInterval > 0) {
+      timer = setInterval(() => void loadData(false), refreshInterval * 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [address]);
 
   // ── Personal derived data ──
-  const revenueChartData = useMemo(() =>
-    nodes.map(n => ({
-      name: `#${n.nodeId.toString()}`,
-      revenue: Number(n.totalRevenue) / 1e18,
-      status: n.status,
-      fill: STATUS_COLORS[n.status] ?? STATUS_COLORS[0],
-    })),
-  [nodes]);
-
-  const myCompletionRate = useMemo(() => {
-    const total = nodes.reduce((sum, n) => sum + n.jobCount, 0);
-    if (total === 0) return 0;
-    const completed = nodes.reduce((sum, n) => sum + n.completedJobs, 0);
-    return Math.round((completed / total) * 100);
-  }, [nodes]);
-
-  const myDonutData = useMemo(() => {
-    const total = nodes.reduce((sum, n) => sum + n.jobCount, 0);
-    const completed = nodes.reduce((sum, n) => sum + n.completedJobs, 0);
-    const pending = Math.max(0, total - completed);
-    return [
-      { name: 'Completed', value: completed, fill: '#00FF41' },
-      { name: 'Pending', value: pending, fill: '#3f4852' },
-    ];
-  }, [nodes]);
+  const revenueChartData = useMemo(
+    () =>
+      nodes.map((n) => ({
+        name: formatNodeId(n.nodeId),
+        revenue: Number(n.totalRevenue) / 1e18,
+        status: n.status,
+        fill: STATUS_COLORS[n.status] ?? STATUS_COLORS[0],
+      })),
+    [nodes],
+  );
 
   const myTotalJobs = useMemo(() => nodes.reduce((sum, n) => sum + n.jobCount, 0), [nodes]);
-  const myCompletedJobs = useMemo(() => nodes.reduce((sum, n) => sum + n.completedJobs, 0), [nodes]);
-  const verifiedCount = useMemo(() => nodes.filter(n => n.verified).length, [nodes]);
+  const myCompletedJobs = useMemo(
+    () => nodes.reduce((sum, n) => sum + n.completedJobs, 0),
+    [nodes],
+  );
+  const verifiedCount = useMemo(() => nodes.filter((n) => n.verified).length, [nodes]);
+
+  const myCompletionRate = useMemo(() => {
+    if (myTotalJobs === 0) return 0;
+    return Math.round((myCompletedJobs / myTotalJobs) * 100);
+  }, [myTotalJobs, myCompletedJobs]);
+
+  const myDonutData = useMemo(
+    () => [
+      { name: 'Completed', value: myCompletedJobs, fill: '#35d97e' },
+      { name: 'Pending', value: Math.max(0, myTotalJobs - myCompletedJobs), fill: '#262c38' },
+    ],
+    [myTotalJobs, myCompletedJobs],
+  );
 
   const healthScore = useMemo(() => {
-    const activeRatio = nodes.length > 0
-      ? nodes.filter(n => n.status === 1 || n.status === 2).length / nodes.length
-      : 0;
+    const activeRatio =
+      nodes.length > 0
+        ? nodes.filter((n) => n.status === 1 || n.status === 2).length / nodes.length
+        : 0;
     const completionRatio = myTotalJobs > 0 ? myCompletedJobs / myTotalJobs : 0;
     const verifiedRatio = nodes.length > 0 ? verifiedCount / nodes.length : 0;
     return Math.round((activeRatio * 40 + completionRatio * 35 + verifiedRatio * 25) * 100) / 100;
   }, [nodes, myTotalJobs, myCompletedJobs, verifiedCount]);
 
-  const healthData = [{ name: 'Health', value: healthScore, fill: healthScore > 70 ? '#00FF41' : healthScore > 40 ? '#FFB800' : '#FF4B4B' }];
+  const healthData = [
+    {
+      name: 'Health',
+      value: healthScore,
+      fill: healthScore > 70 ? '#35d97e' : healthScore > 40 ? '#f5b544' : '#ff6b6b',
+    },
+  ];
 
-  // ── Loading state ──
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center pt-20">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
-          <span className="font-mono text-xs text-outline">Loading on-chain data...</span>
-        </div>
-      </div>
-    );
-  }
+  const marketShare =
+    Number(totalVolume) > 0
+      ? ((Number(totalRevenue) / Number(totalVolume)) * 100).toFixed(1)
+      : '0.0';
 
-  // ── Not connected ──
-  if (!address) {
-    return (
-      <div className="px-6 pb-8 w-full">
-        {/* Still show global network data */}
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 mt-4">
-          <SectionHeader icon={Globe} title="Network Overview" subtitle="Global BOT Chain DePIN statistics" />
-          <motion.div variants={containerStagger} initial="hidden" animate="show" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Active Nodes" value={activeNodes.toString()} icon={Server} accent="text-primary" />
-            <StatCard label="Total Jobs" value={totalJobs.toString()} icon={Zap} accent="text-compute-idle" />
-            <StatCard label="Network Volume" value={formatBOTCompact(totalVolume)} sublabel="DGRAM" icon={TrendingUp} accent="text-on-surface" />
-            <StatCard label="CIF Supply" value={formatBOTCompact(cifSupply)} sublabel="DGRAM" icon={Layers} accent="text-primary" />
+  const compute = formatTflops(totalTflops);
+
+  // ── Network overview: shown whether or not a wallet is connected ──
+  const networkSection = (
+    <section className="mb-8">
+      <SectionHeader
+        icon={Globe}
+        title="Network overview"
+        description="Live totals across the BOT Chain DePIN network"
+      />
+      {loading ? (
+        <SkeletonStats count={5} />
+      ) : (
+        <motion.div
+          variants={containerStagger}
+          initial="hidden"
+          animate="show"
+          className="grid grid-cols-2 gap-3 lg:grid-cols-5"
+        >
+          <motion.div variants={fadeInUp}>
+            <Stat
+              label="Active nodes"
+              value={activeNodes.toString()}
+              detail="network-wide"
+              icon={Server}
+              tone="accent"
+            />
+          </motion.div>
+          <motion.div variants={fadeInUp}>
+            {/* Completed counts are only fetched alongside provider data, so
+                don't claim "0 completed" before a wallet is connected. */}
+            <Stat
+              label="Total jobs"
+              value={totalJobs.toString()}
+              detail={address ? `${completedStats.total} completed` : 'network-wide'}
+              icon={Zap}
+            />
+          </motion.div>
+          <motion.div variants={fadeInUp}>
+            <Stat
+              label="Network volume"
+              value={formatBOTCompact(totalVolume)}
+              unit="DGRAM"
+              icon={TrendingUp}
+            />
+          </motion.div>
+          <motion.div variants={fadeInUp}>
+            <Stat
+              label="Compute power"
+              value={compute.value}
+              unit={compute.unit}
+              detail={`${totalVram.toLocaleString()} GB VRAM pooled`}
+              icon={Cpu}
+              tone="success"
+            />
+          </motion.div>
+          <motion.div variants={fadeInUp}>
+            <Stat
+              label="CIF value locked"
+              value={formatBOTCompact(tvl)}
+              unit="DGRAM"
+              detail={`${formatBOTCompact(cifSupply)} CIF in circulation`}
+              icon={Layers}
+              tone="accent"
+            />
           </motion.div>
         </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-12 mt-4"
-        >
-          <Cpu className="mb-3 h-10 w-10 text-outline" />
-          <h2 className="mb-1 text-sm font-semibold text-on-surface">Connect Wallet to View Provider Stats</h2>
-          <p className="text-xs text-on-surface-variant">Connect your wallet to see your compute nodes, revenue, and earnings.</p>
-        </motion.div>
-      </div>
-    );
-  }
+      )}
+    </section>
+  );
 
   return (
-    <div className="px-6 pb-8 w-full">
-      {/* ── Page Header ── */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="mb-6 mt-4 flex items-end justify-between"
-      >
-        <div>
-          <h1 className="mb-1 text-base font-bold leading-tight tracking-tight text-on-background">Dashboard</h1>
-          <p className="max-w-2xl text-xs text-on-surface-variant">Real-time on-chain telemetry for BOT Chain DePIN network.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col items-end rounded-lg bg-surface-container-low px-3 py-2">
-            <span className="font-mono text-[10px] font-semibold text-outline">WALLET</span>
-            <span className="font-mono text-sm text-on-surface-variant">{formatAddress(address)}</span>
+    <PageShell>
+      <PageHeader
+        title="Dashboard"
+        description="On-chain telemetry for the network and for the compute you provide."
+      />
+
+      {networkSection}
+
+      {/* ── Your provider ── */}
+      <section>
+        <SectionHeader
+          icon={User}
+          title="Your provider"
+          description="Nodes you operate, what they earned, and how reliably they finish work"
+        />
+
+        {!address ? (
+          <EmptyState
+            icon={Cpu}
+            title="Connect a wallet to see your nodes"
+            description="Provider stats — revenue, job history and node health — are read from the address you connect."
+          />
+        ) : loading ? (
+          <div className="flex flex-col gap-4">
+            <SkeletonStats count={5} />
+            <Skeleton className="h-64 w-full rounded-xl" />
           </div>
-        </div>
-      </motion.div>
-
-      {/* ═══════════════════════════════════════════════════ */}
-      {/* SECTION 1: 🌐 NETWORK OVERVIEW (Global Data)        */}
-      {/* ═══════════════════════════════════════════════════ */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="mb-6">
-        <SectionHeader icon={Globe} title="Network Overview" subtitle="Global BOT Chain DePIN statistics" />
-
-        {/* Global KPI Row */}
-        <motion.div variants={containerStagger} initial="hidden" animate="show" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label="Active Nodes" value={activeNodes.toString()} sublabel="network-wide" icon={Server} accent="text-primary" />
-          <StatCard label="Total Jobs" value={totalJobs.toString()} sublabel={`${completedStats.total} completed`} icon={Zap} accent="text-compute-idle" />
-          <StatCard label="Network Volume" value={formatBOTCompact(totalVolume)} sublabel="DGRAM" icon={TrendingUp} accent="text-on-surface" />
-          <StatCard label="CIF TVL" value={formatBOTCompact(tvl)} sublabel={`${formatBOTCompact(cifSupply)} supply`} icon={Layers} accent="text-compute-active" />
-        </motion.div>
-      </motion.div>
-
-      {/* ═══════════════════════════════════════════════════ */}
-      {/* SECTION 2: 💻 YOUR PROVIDER (Personal Data)          */}
-      {/* ═══════════════════════════════════════════════════ */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
-        <div className="mb-4 flex items-center justify-between">
-          <SectionHeader icon={User} title="Your Provider" subtitle="Your compute nodes, revenue, and performance" />
-          <div className="flex items-center gap-2">
-            <div className="flex flex-col items-end rounded-lg bg-surface-container-low px-3 py-2">
-              <span className="font-mono text-[10px] font-semibold text-outline">CIF BALANCE</span>
-              <span className="font-mono text-sm text-primary">{formatBOTCompact(cifBalance)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-          {/* ── Left: Personal KPIs + Charts ── */}
-          <div className="flex flex-col gap-4 xl:col-span-8">
-            {/* Personal KPI Row */}
-            <motion.div variants={containerStagger} initial="hidden" animate="show" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <StatCard label="Your Revenue" value={formatBOTCompact(totalRevenue)} sublabel="DGRAM earned" icon={DollarSign} accent="text-compute-active" />
-              <StatCard label="Your Nodes" value={nodes.length.toString()} sublabel={`${verifiedCount} verified`} icon={Cpu} accent="text-primary" />
-              <StatCard label="Your Jobs" value={myTotalJobs.toString()} sublabel={`${myCompletedJobs} completed`} icon={CheckCircle2} accent="text-compute-idle" />
-              <StatCard label="Completion" value={`${myCompletionRate}%`} sublabel="job success rate" icon={Activity} accent="text-compute-active" />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {/* Personal KPI row. Market share lives here rather than in a
+                separate "network context" panel that restated the totals
+                already shown above. */}
+            <motion.div
+              variants={containerStagger}
+              initial="hidden"
+              animate="show"
+              className="grid grid-cols-2 gap-3 lg:grid-cols-5"
+            >
+              <motion.div variants={fadeInUp}>
+                <Stat
+                  label="Revenue earned"
+                  value={formatBOTCompact(totalRevenue)}
+                  unit="DGRAM"
+                  icon={DollarSign}
+                  tone="success"
+                />
+              </motion.div>
+              <motion.div variants={fadeInUp}>
+                <Stat
+                  label="Your nodes"
+                  value={nodes.length.toString()}
+                  detail={`${verifiedCount} verified`}
+                  icon={Cpu}
+                  tone="accent"
+                />
+              </motion.div>
+              <motion.div variants={fadeInUp}>
+                <Stat
+                  label="Jobs received"
+                  value={myTotalJobs.toString()}
+                  detail={`${myCompletedJobs} completed`}
+                  icon={CheckCircle2}
+                />
+              </motion.div>
+              <motion.div variants={fadeInUp}>
+                <Stat
+                  label="Completion rate"
+                  value={`${myCompletionRate}%`}
+                  detail="jobs finished on-chain"
+                  icon={Activity}
+                  tone="success"
+                />
+              </motion.div>
+              <motion.div variants={fadeInUp}>
+                <Stat
+                  label="Market share"
+                  value={`${marketShare}%`}
+                  detail="of network volume"
+                  icon={PieIcon}
+                  tone="accent"
+                />
+              </motion.div>
             </motion.div>
 
-            {/* Charts Row */}
-            <motion.div variants={containerStagger} initial="hidden" animate="show" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {/* Revenue Distribution Bar Chart */}
-              <motion.div variants={scaleIn} className="rounded-2xl bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4 text-outline" />
-                  <h3 className="text-xs font-semibold text-on-surface">Revenue by Node</h3>
+            {/* Charts */}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <Card className="p-5 xl:col-span-2">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-subtitle text-on-surface">Revenue by node</h3>
+                  <BarChart3 className="h-4 w-4 text-outline" aria-hidden />
                 </div>
                 {revenueChartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={revenueChartData} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
-                      <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#88919d', fontFamily: 'JetBrains Mono' }} axisLine={{ stroke: '#3f4852' }} tickLine={false} />
-                      <YAxis tick={{ fontSize: 9, fill: '#88919d', fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<ChartTooltip />} cursor={{ fill: '#3f485220' }} />
-                      <Bar dataKey="revenue" radius={[4, 4, 0, 0]}>
-                        {revenueChartData.map((entry, idx) => (
-                          <Cell key={idx} fill={entry.fill} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart
+                        data={revenueChartData}
+                        margin={{ top: 4, right: 4, bottom: 4, left: -16 }}
+                      >
+                        <XAxis
+                          dataKey="name"
+                          tick={AXIS_TICK}
+                          axisLine={{ stroke: '#262c38' }}
+                          tickLine={false}
+                        />
+                        <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} />
+                        <Tooltip content={<ChartTooltip />} cursor={{ fill: '#262c3840' }} />
+                        <Bar dataKey="revenue" radius={[4, 4, 0, 0]} maxBarSize={56}>
+                          {revenueChartData.map((entry, idx) => (
+                            <Cell key={idx} fill={entry.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-4 border-t border-outline-variant pt-3">
+                      {STATUS_LABELS.map((label, i) => (
+                        <span key={i} className="flex items-center gap-1.5">
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ backgroundColor: STATUS_COLORS[i] }}
+                          />
+                          <span className="text-caption text-on-surface-variant">{label}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
                 ) : (
-                  <div className="flex h-[180px] items-center justify-center">
-                    <span className="font-mono text-[10px] text-outline">No revenue data yet</span>
+                  <div className="flex h-[200px] items-center justify-center">
+                    <p className="text-caption text-outline">No revenue recorded yet</p>
                   </div>
                 )}
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
-                  {STATUS_LABELS.map((label, i) => (
-                    <div key={i} className="flex items-center gap-1">
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[i] }} />
-                      <span className="font-mono text-[9px] text-outline">{label}</span>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
+              </Card>
 
-              {/* Job Completion Donut — Personal */}
-              <motion.div variants={scaleIn} className="rounded-2xl bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-outline" />
-                  <h3 className="text-xs font-semibold text-on-surface">Your Job Completion</h3>
+              <Card className="p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-subtitle text-on-surface">Provider health</h3>
+                  <Activity className="h-4 w-4 text-outline" aria-hidden />
                 </div>
-                <div className="relative h-[180px]">
+                <div className="relative h-[168px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadialBarChart
+                      cx="50%"
+                      cy="50%"
+                      innerRadius="72%"
+                      outerRadius="100%"
+                      data={healthData}
+                      startAngle={90}
+                      endAngle={-270}
+                    >
+                      <RadialBar
+                        background={{ fill: '#262c38' }}
+                        dataKey="value"
+                        cornerRadius={10}
+                        fill={healthData[0].fill}
+                      />
+                    </RadialBarChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="font-mono text-display" style={{ color: healthData[0].fill }}>
+                      {healthScore}
+                    </span>
+                    <span className="text-eyebrow uppercase text-outline">of 100</span>
+                  </div>
+                </div>
+                <dl className="mt-3 flex flex-col gap-2 border-t border-outline-variant pt-3">
+                  <HealthRow
+                    label="Nodes online"
+                    value={`${nodes.filter((n) => n.status === 1 || n.status === 2).length}/${nodes.length}`}
+                  />
+                  <HealthRow label="Verified" value={`${verifiedCount}/${nodes.length}`} />
+                  <HealthRow label="Completion" value={`${myCompletionRate}%`} />
+                </dl>
+              </Card>
+            </div>
+
+            {/* Node list + job completion */}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <Card className="p-5 xl:col-span-2">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-subtitle text-on-surface">Your compute nodes</h3>
+                  {nodes.length > 0 && (
+                    <Badge tone="success">
+                      <StatusDot tone="success" live className="mr-0.5" />
+                      {nodes.length} registered
+                    </Badge>
+                  )}
+                </div>
+
+                {nodes.length === 0 ? (
+                  <EmptyState
+                    icon={Cpu}
+                    title="No nodes registered"
+                    description="Register hardware from My Nodes to start receiving compute jobs."
+                    className="border-0 bg-transparent py-8"
+                  />
+                ) : (
+                  <motion.ul
+                    variants={containerStagger}
+                    initial="hidden"
+                    animate="show"
+                    className="flex flex-col gap-2"
+                  >
+                    {nodes.map((node, idx) => {
+                      const completionPct =
+                        node.jobCount > 0
+                          ? Math.round((node.completedJobs / node.jobCount) * 100)
+                          : 0;
+                      return (
+                        <motion.li
+                          key={idx}
+                          variants={fadeInUp}
+                          className="relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container/60 p-3.5 transition-colors hover:border-outline/60 hover:bg-surface-container"
+                        >
+                          <span
+                            aria-hidden
+                            className="absolute inset-y-0 left-0 w-0.5"
+                            style={{ backgroundColor: STATUS_COLORS[node.status] }}
+                          />
+                          <div className="flex items-start justify-between gap-3 pl-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-2">
+                                <span className="text-label text-on-surface">{node.model}</span>
+                                <Badge tone={STATUS_TONES[node.status]}>
+                                  {STATUS_LABELS[node.status]}
+                                </Badge>
+                                {node.verified && (
+                                  <ShieldCheck
+                                    className="h-3.5 w-3.5 text-compute-active"
+                                    aria-label="Verified"
+                                  />
+                                )}
+                              </div>
+                              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-on-surface-variant">
+                                <span className="font-mono" title={node.nodeId.toString()}>
+                                  {formatNodeId(node.nodeId)}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="h-3 w-3" aria-hidden /> {node.region}
+                                </span>
+                                {node.vramGB > 0 && (
+                                  <span className="font-mono">{node.vramGB} GB VRAM</span>
+                                )}
+                                <span>{timeAgo(node.registeredAt)}</span>
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <span className="block text-eyebrow uppercase text-outline">
+                                Revenue
+                              </span>
+                              <span className="font-mono text-label text-compute-active">
+                                {formatBOTCompact(node.totalRevenue)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-2.5 pl-2">
+                            <div className="mb-1 flex items-center justify-between text-caption">
+                              <span className="text-on-surface-variant">
+                                <span className="font-mono">{node.completedJobs}</span> of{' '}
+                                <span className="font-mono">{node.jobCount}</span> jobs completed
+                              </span>
+                              <span className="font-mono text-on-surface-variant">
+                                {completionPct}%
+                              </span>
+                            </div>
+                            <div
+                              className="h-1 w-full overflow-hidden rounded-full bg-surface-container-highest"
+                              role="progressbar"
+                              aria-valuenow={completionPct}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                            >
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${completionPct}%` }}
+                                transition={{
+                                  delay: 0.2 + idx * 0.05,
+                                  duration: 0.5,
+                                  ease: 'easeOut',
+                                }}
+                                className="h-full rounded-full"
+                                style={{
+                                  backgroundColor:
+                                    completionPct === 100
+                                      ? '#35d97e'
+                                      : completionPct > 50
+                                        ? '#f5b544'
+                                        : '#6b7688',
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </motion.li>
+                      );
+                    })}
+                  </motion.ul>
+                )}
+              </Card>
+
+              <Card className="p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-subtitle text-on-surface">Job completion</h3>
+                  <CheckCircle2 className="h-4 w-4 text-outline" aria-hidden />
+                </div>
+                <div className="relative h-[168px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={myDonutData} cx="50%" cy="50%" innerRadius={55} outerRadius={75} paddingAngle={3} dataKey="value" stroke="none">
+                      <Pie
+                        data={myDonutData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={58}
+                        outerRadius={78}
+                        paddingAngle={3}
+                        dataKey="value"
+                        stroke="none"
+                      >
                         {myDonutData.map((entry, idx) => (
                           <Cell key={idx} fill={entry.fill} />
                         ))}
@@ -392,213 +689,39 @@ export function Dashboard() {
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="font-mono text-2xl font-bold text-on-surface">{myCompletionRate}%</span>
-                    <span className="font-mono text-[9px] text-outline">COMPLETION</span>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center justify-center gap-4">
-                  <div className="flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-compute-active" />
-                    <span className="font-mono text-[9px] text-outline">Completed: {myCompletedJobs}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-outline-variant" />
-                    <span className="font-mono text-[9px] text-outline">Pending: {Math.max(0, myTotalJobs - myCompletedJobs)}</span>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-
-            {/* Node Cards + Health Gauge */}
-            <motion.div variants={fadeInUp} initial="hidden" animate="show" className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              {/* Provider Health Gauge */}
-              <div className="rounded-2xl bg-surface-container-low p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-outline" />
-                  <h3 className="text-xs font-semibold text-on-surface">Provider Health</h3>
-                </div>
-                <div className="relative h-[160px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadialBarChart cx="50%" cy="50%" innerRadius="70%" outerRadius="100%" data={healthData} startAngle={90} endAngle={-270}>
-                      <RadialBar background={{ fill: '#3f485230' }} dataKey="value" cornerRadius={10} fill={healthData[0].fill} />
-                    </RadialBarChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="font-mono text-3xl font-bold" style={{ color: healthData[0].fill }}>{healthScore}</span>
-                    <span className="font-mono text-[9px] text-outline">/ 100</span>
-                  </div>
-                </div>
-                <div className="mt-1 flex flex-col gap-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-outline">Active Nodes</span>
-                    <span className="font-mono text-[9px] font-semibold text-compute-active">
-                      {nodes.filter(n => n.status === 1 || n.status === 2).length}/{nodes.length}
+                    <span className="font-mono text-display text-on-surface">
+                      {myCompletionRate}%
                     </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-outline">Verified</span>
-                    <span className="font-mono text-[9px] font-semibold text-primary">{verifiedCount}/{nodes.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-outline">Completion</span>
-                    <span className="font-mono text-[9px] font-semibold text-compute-idle">{myCompletionRate}%</span>
+                    <span className="text-eyebrow uppercase text-outline">completed</span>
                   </div>
                 </div>
-              </div>
-
-              {/* Your Compute Nodes */}
-              <div className="lg:col-span-2 rounded-2xl bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-4 w-4 text-outline" />
-                    <h3 className="text-xs font-semibold text-on-surface">Your Compute Nodes</h3>
-                  </div>
-                  <span className="flex items-center gap-1.5 rounded-full bg-compute-active/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-compute-active">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-compute-active"></span>
-                    {nodes.length} REGISTERED
-                  </span>
-                </div>
-                <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto">
-                  {nodes.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center p-6">
-                      <Cpu className="mb-2 h-6 w-6 text-outline" />
-                      <p className="text-xs text-on-surface-variant">No nodes registered yet.</p>
-                    </div>
-                  ) : (
-                    <motion.div variants={containerStagger} initial="hidden" animate="show" className="flex flex-col gap-2">
-                      {nodes.map((node, idx) => {
-                        const completionPct = node.jobCount > 0 ? Math.round((node.completedJobs / node.jobCount) * 100) : 0;
-                        const statusColor = STATUS_COLORS[node.status] ?? STATUS_COLORS[0];
-                        return (
-                          <motion.div
-                            key={idx}
-                            variants={fadeInUp}
-                            whileHover={{ scale: 1.02, transition: { duration: 0.15 } }}
-                            className="group relative overflow-hidden rounded-xl bg-surface-container p-3 transition-colors hover:bg-surface-container-high"
-                          >
-                            <div className="absolute left-0 top-0 h-full w-1" style={{ backgroundColor: statusColor }} />
-                            <div className="flex items-start justify-between gap-3 pl-2">
-                              <div className="min-w-0 flex-1">
-                                <div className="mb-1 flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] font-semibold text-outline">NODE #{node.nodeId.toString()}</span>
-                                  <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase ${STATUS_BG[node.status]}`}>
-                                    {STATUS_LABELS[node.status]}
-                                  </span>
-                                  {node.verified && <ShieldCheck className="h-3 w-3 text-compute-active" />}
-                                </div>
-                                <p className="text-xs font-medium text-on-surface">{node.model}</p>
-                                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-outline">
-                                  <span className="flex items-center gap-0.5"><MapPin className="h-2.5 w-2.5" /> {node.region}</span>
-                                  <span>{node.vramGB} GB VRAM</span>
-                                  <span>{timeAgo(node.registeredAt)}</span>
-                                </div>
-                              </div>
-                              <div className="shrink-0 text-right">
-                                <span className="mb-0.5 block font-mono text-[9px] font-semibold text-outline">REVENUE</span>
-                                <span className="font-mono text-xs font-medium text-compute-active">{formatBOTCompact(node.totalRevenue)}</span>
-                              </div>
-                            </div>
-                            <div className="mt-2 pl-2">
-                              <div className="mb-1 flex items-center justify-between">
-                                <span className="font-mono text-[9px] text-outline">Jobs: {node.completedJobs}/{node.jobCount}</span>
-                                <span className="font-mono text-[9px] font-semibold text-on-surface-variant">{completionPct}%</span>
-                              </div>
-                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                                <motion.div
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${completionPct}%` }}
-                                  transition={{ delay: 0.5 + idx * 0.1, duration: 0.6, ease: 'easeOut' }}
-                                  className="h-full rounded-full"
-                                  style={{ backgroundColor: completionPct === 100 ? '#00FF41' : completionPct > 50 ? '#FFB800' : '#FF4B4B' }}
-                                />
-                              </div>
-                            </div>
-                          </motion.div>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
+                <dl className="mt-3 flex flex-col gap-2 border-t border-outline-variant pt-3">
+                  <HealthRow
+                    label="Completed"
+                    value={myCompletedJobs.toString()}
+                    tone="text-compute-active"
+                  />
+                  <HealthRow
+                    label="Pending"
+                    value={Math.max(0, myTotalJobs - myCompletedJobs).toString()}
+                  />
+                </dl>
+              </Card>
+            </div>
           </div>
+        )}
+      </section>
+    </PageShell>
+  );
+}
 
-          {/* ── Right: Per-Node Revenue + Network Context ── */}
-          <div className="flex flex-col gap-4 xl:col-span-4">
-            {/* Per-Node Revenue Breakdown */}
-            <motion.div variants={scaleIn} initial="hidden" animate="show" className="rounded-2xl bg-surface-container p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-on-surface">Per-Node Revenue</h3>
-                <BarChart3 className="h-3.5 w-3.5 text-outline" />
-              </div>
-              <div className="flex flex-col gap-2">
-                {nodes.length > 0 ? (
-                  nodes.map((node, idx) => (
-                    <div key={idx} className="rounded-xl bg-surface-container-low p-3">
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-on-surface">
-                          <Cpu className="h-3 w-3 text-outline" /> Node #{node.nodeId.toString()}
-                        </span>
-                        {node.verified && <ShieldCheck className="h-3 w-3 text-compute-active" />}
-                      </div>
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <span className="font-mono text-sm font-bold text-compute-active">{formatBOTCompact(node.totalRevenue)}</span>
-                          <span className="ml-1 font-mono text-[10px] text-outline">DGRAM</span>
-                        </div>
-                        <span className="font-mono text-[9px] text-outline">{node.jobCount} jobs · {node.completedJobs} done</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="flex items-center justify-center p-4">
-                    <span className="font-mono text-[10px] text-outline">No nodes registered</span>
-                  </div>
-                )}
-                {/* Wallet */}
-                {address && (
-                  <div className="mt-1 rounded-xl bg-surface-container-low p-3">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-on-surface">
-                        <Wallet className="h-3 w-3 text-outline" /> Wallet
-                      </span>
-                    </div>
-                    <span className="font-mono text-xs text-on-surface-variant">{formatAddress(address)}</span>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-
-            {/* Network Context — clearly labeled as GLOBAL, not personal */}
-            <motion.div variants={fadeInUp} initial="hidden" animate="show" className="rounded-2xl border border-outline-variant/20 bg-surface-container-lowest/50 p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <Globe className="h-3.5 w-3.5 text-outline" />
-                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-outline">Network Context</h3>
-              </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2">
-                  <span className="font-mono text-[10px] text-on-surface-variant">Network Total Volume</span>
-                  <span className="font-mono text-xs text-primary">{formatBOTCompact(totalVolume)} DGRAM</span>
-                </div>
-                <div className="flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2">
-                  <span className="font-mono text-[10px] text-on-surface-variant">Network Total Jobs</span>
-                  <span className="font-mono text-xs text-primary">{totalJobs.toString()}</span>
-                </div>
-                <div className="flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2">
-                  <span className="font-mono text-[10px] text-on-surface-variant">CIF Total Supply</span>
-                  <span className="font-mono text-xs text-primary">{formatBOTCompact(cifSupply)}</span>
-                </div>
-                <div className="flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2">
-                  <span className="font-mono text-[10px] text-on-surface-variant">Your Market Share</span>
-                  <span className="font-mono text-xs text-compute-active">
-                    {Number(totalVolume) > 0 ? ((Number(totalRevenue) / Number(totalVolume)) * 100).toFixed(1) : '0.0'}%
-                  </span>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        </div>
-      </motion.div>
+function HealthRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-caption text-on-surface-variant">{label}</dt>
+      <dd className={`font-mono text-caption font-semibold ${tone ?? 'text-on-surface'}`}>
+        {value}
+      </dd>
     </div>
   );
 }

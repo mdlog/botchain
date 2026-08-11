@@ -1,13 +1,83 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, TrendingUp, Cpu, ArrowRight, ArrowDown, ShieldCheck, Server } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { parseEther, type ReadContractReturnType } from 'viem';
+import {
+  Plus,
+  TrendingUp,
+  Cpu,
+  ShieldCheck,
+  Layers,
+  Coins,
+  ArrowDownToLine,
+  Wallet,
+} from 'lucide-react';
+import { PageShell, PageHeader, SectionHeader } from '@/components/layout/PageShell';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Stat } from '@/components/ui/Stat';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { SkeletonStats, Skeleton } from '@/components/ui/Skeleton';
 import { useWalletContext } from '@/context/WalletContext';
+import { useToast } from '@/context/ToastContext';
 import { useComputeIndexToken } from '@/hooks/useComputeIndexToken';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
-import { formatBOT, formatBOTCompact, formatAddress } from '@/lib/format';
+import { formatBOT, formatBOTCompact, formatNodeId } from '@/lib/format';
+import { describeTxError } from '@/lib/tx';
+import type { computeIndexTokenAbi } from '@/config/abis';
+
+/** One row of ComputeIndexToken.getDeposits, shaped by the generated ABI. */
+type CifDeposit = ReadContractReturnType<typeof computeIndexTokenAbi, 'getDeposits'>[number];
+
+const STEPS = [
+  {
+    title: 'Register and verify a node',
+    body: 'Publish your hardware from My Nodes, then verify it. Only verified nodes can deposit.',
+  },
+  {
+    title: 'Deposit compute revenue',
+    body: 'Deposit the DGRAM your node earned. CIF is minted to you 1:1 against it.',
+  },
+  {
+    title: 'Hold or trade CIF',
+    body: 'CIF is a transferable ERC-20. Hold it for yield, or trade it on BDEX.',
+  },
+  {
+    title: 'Withdraw whenever',
+    body: 'Burn CIF to take DGRAM back out. A 0.5% fee stays in the protocol treasury.',
+  },
+];
+
+/**
+ * The amount fields are decimal text. Parsing them with BigInt() threw a
+ * SyntaxError on anything with a decimal point — before any RPC call — and the
+ * catch then blamed the chain for it.
+ */
+const AMOUNT_PATTERN = /^\d+(\.\d{1,18})?$/;
+
+function isValidAmount(value: string): boolean {
+  return AMOUNT_PATTERN.test(value.trim()) && Number(value) > 0;
+}
+
+function amountError(value: string): string | undefined {
+  if (value.trim() === '') return undefined;
+  if (!AMOUNT_PATTERN.test(value.trim())) return 'Numbers only, up to 18 decimal places.';
+  if (Number(value) <= 0) return 'Enter an amount above zero.';
+  return undefined;
+}
 
 export function FinancialLayer() {
   const { address } = useWalletContext();
-  const { getBalance, getTotalSupply, getTVL, getIndexPrice, getDeposits, depositRevenue, withdraw } = useComputeIndexToken();
+  const toast = useToast();
+  const {
+    getBalance,
+    getTotalSupply,
+    getTVL,
+    getIndexPrice,
+    getDeposits,
+    depositRevenue,
+    withdraw,
+  } = useComputeIndexToken();
   const { getProviderNodes, getNode } = useComputeRegistry();
 
   const [loading, setLoading] = useState(true);
@@ -15,8 +85,8 @@ export function FinancialLayer() {
   const [cifSupply, setCifSupply] = useState(0n);
   const [tvl, setTvl] = useState(0n);
   const [indexPrice, setIndexPrice] = useState(0n);
-  const [deposits, setDeposits] = useState<any[]>([]);
-  const [nodes, setNodes] = useState<{id: bigint, model: string, verified: boolean}[]>([]);
+  const [deposits, setDeposits] = useState<CifDeposit[]>([]);
+  const [nodes, setNodes] = useState<{ id: bigint; model: string; verified: boolean }[]>([]);
   const [txPending, setTxPending] = useState(false);
 
   // Deposit form
@@ -27,9 +97,26 @@ export function FinancialLayer() {
   // Withdraw form
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
+  async function refreshTotals() {
+    if (!address) return;
+    const [bal, supply, tvlVal, idxPrice] = await Promise.all([
+      getBalance(address),
+      getTotalSupply(),
+      getTVL(),
+      getIndexPrice(),
+    ]);
+    setCifBalance(bal);
+    setCifSupply(supply);
+    setTvl(tvlVal);
+    setIndexPrice(idxPrice);
+  }
+
   useEffect(() => {
     async function loadData() {
-      if (!address) { setLoading(false); return; }
+      if (!address) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const [bal, supply, tvlVal, idxPrice, deps] = await Promise.all([
@@ -43,14 +130,14 @@ export function FinancialLayer() {
         setCifSupply(supply);
         setTvl(tvlVal);
         setIndexPrice(idxPrice);
-        setDeposits(deps as any[]);
+        setDeposits([...deps]);
 
         // Load provider nodes for deposit form
         const nodeIds = await getProviderNodes(address);
-        const nodeDetails: {id: bigint, model: string, verified: boolean}[] = [];
+        const nodeDetails: { id: bigint; model: string; verified: boolean }[] = [];
         for (const id of nodeIds) {
           try {
-            const node = await getNode(id) as any;
+            const node = await getNode(id);
             if (node) {
               nodeDetails.push({
                 id,
@@ -58,334 +145,374 @@ export function FinancialLayer() {
                 verified: node.verified,
               });
             }
-          } catch {}
+          } catch (err) {
+            console.warn('[FinancialLayer] skipping node', id.toString(), err);
+          }
         }
         setNodes(nodeDetails);
-        if (nodeDetails.length > 0) setDepositNodeId(nodeDetails[0].id.toString());
+        const firstVerified = nodeDetails.find((n) => n.verified);
+        if (firstVerified) setDepositNodeId(firstVerified.id.toString());
       } catch (err) {
         console.error('[FinancialLayer] Load failed:', err);
       } finally {
         setLoading(false);
       }
     }
-    loadData();
+    void loadData();
   }, [address]);
 
   async function handleDeposit() {
-    if (!address || !depositNodeId) return;
+    if (!address || !depositNodeId || !isValidAmount(depositAmount)) return;
     setTxPending(true);
     try {
-      const value = BigInt(depositAmount) * 10n ** 18n;
-      const hash = await depositRevenue(BigInt(depositNodeId), value);
-      if (hash) {
-        alert(`Deposited! TX: ${hash}`);
-        setShowDeposit(false);
-        // Reload
-        const [bal, supply, tvlVal] = await Promise.all([
-          getBalance(address),
-          getTotalSupply(),
-          getTVL(),
-        ]);
-        setCifBalance(bal);
-        setCifSupply(supply);
-        setTvl(tvlVal);
-      }
+      const hash = await depositRevenue(BigInt(depositNodeId), parseEther(depositAmount));
+      setShowDeposit(false);
+      setDepositAmount('');
+      await refreshTotals();
+      toast.success('Revenue deposited', {
+        description: `${depositAmount} DGRAM locked, CIF minted at the current index price.`,
+        txHash: hash,
+      });
     } catch (err) {
-      console.error('[FinancialLayer] Deposit failed:', err);
-      alert('Deposit failed. Make sure the node is verified.');
+      console.error('[FinancialLayer] deposit failed:', err);
+      toast.error('Deposit was not accepted', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
   }
 
   async function handleWithdraw() {
-    if (!address || !withdrawAmount) return;
+    if (!address || !isValidAmount(withdrawAmount)) return;
     setTxPending(true);
     try {
-      const amount = BigInt(withdrawAmount) * 10n ** 18n;
-      const hash = await withdraw(amount);
-      if (hash) {
-        alert(`Withdrawn! TX: ${hash}`);
-        setWithdrawAmount('');
-        const [bal, supply, tvlVal] = await Promise.all([
-          getBalance(address),
-          getTotalSupply(),
-          getTVL(),
-        ]);
-        setCifBalance(bal);
-        setCifSupply(supply);
-        setTvl(tvlVal);
-      }
+      const hash = await withdraw(parseEther(withdrawAmount));
+      setWithdrawAmount('');
+      await refreshTotals();
+      toast.success('Withdrawal complete', {
+        description: `${withdrawAmount} CIF burned. DGRAM returned at the index price, less the 0.5% fee.`,
+        txHash: hash,
+      });
     } catch (err) {
-      console.error('[FinancialLayer] Withdraw failed:', err);
-      alert('Withdraw failed.');
+      console.error('[FinancialLayer] withdraw failed:', err);
+      toast.error('Withdrawal was not completed', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
   }
 
-  if (loading) {
+  const verifiedNodes = nodes.filter((n) => n.verified);
+
+  const header = (
+    <PageHeader
+      title="Finance"
+      description="Deposit compute revenue to mint CIF — fractional ownership of real GPU earnings on BOT Chain."
+      actions={
+        address && (
+          <Button variant="primary" icon={Plus} onClick={() => setShowDeposit(true)}>
+            Deposit revenue
+          </Button>
+        )
+      }
+    />
+  );
+
+  if (!address) {
     return (
-      <div className="flex h-full items-center justify-center pt-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
-      </div>
+      <PageShell>
+        {header}
+        <EmptyState
+          icon={Wallet}
+          title="Connect a wallet to manage CIF"
+          description="Deposits, balances and withdrawals are all tied to the address you connect."
+        />
+      </PageShell>
     );
   }
 
   return (
-    <div className="relative flex w-full flex-col">
-      <div className="relative z-10 space-y-6 p-4 md:p-8 lg:space-y-12">
-        {/* Header */}
-        <header className="flex flex-col items-start justify-between gap-4 border-b border-outline-variant/10 pb-6 md:flex-row md:items-end">
-          <div>
-            <h1 className="text-base font-bold leading-tight tracking-tight text-on-background">Finance</h1>
-            <p className="mt-1 max-w-2xl text-xs text-on-surface-variant">
-              Deposit compute revenue to mint CIF tokens — fractional ownership of real-world GPU assets on BOT Chain.
-            </p>
-          </div>
-          {address && (
-            <button
-              onClick={() => setShowDeposit(!showDeposit)}
-              className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-mono text-[10px] font-semibold text-on-primary shadow-[0_0_20px_rgba(152,203,255,0.3)] transition-all hover:bg-primary-fixed-dim"
-            >
-              <Plus className="h-4 w-4" />
-              DEPOSIT REVENUE
-            </button>
-          )}
-        </header>
+    <PageShell>
+      {header}
 
-        {!address ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
-            <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet to View Finance</h2>
-            <p className="text-sm text-on-surface-variant">Connect your wallet to manage CIF tokens and deposits.</p>
-          </div>
-        ) : (
-          <>
-            {/* Metrics Overview */}
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-4 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[10px] font-semibold text-outline">TOTAL VALUE LOCKED</div>
-                <div className="flex items-baseline gap-1 font-mono text-base font-semibold text-on-surface">
-                  {formatBOTCompact(tvl)}
-                </div>
-                <div className="mt-1 font-mono text-xs text-outline">DGRAM</div>
-                <div className="mt-4 flex items-center gap-2 text-sm text-compute-active">
-                  <TrendingUp className="h-4 w-4" />
-                  <span>Backed by real compute revenue</span>
-                </div>
-              </div>
+      {loading ? (
+        <div className="flex flex-col gap-4">
+          <SkeletonStats count={4} />
+          <Skeleton className="h-64 w-full rounded-xl" />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-8">
+          {/* ── Metrics ── */}
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat
+              label="Total value locked"
+              value={formatBOTCompact(tvl)}
+              unit="DGRAM"
+              detail="backed by real compute revenue"
+              icon={TrendingUp}
+            />
+            <Stat
+              label="CIF supply"
+              value={formatBOTCompact(cifSupply)}
+              unit="CIF"
+              detail={cifSupply > 0n ? '100% backed' : 'nothing minted yet'}
+              icon={Layers}
+              tone="accent"
+            />
+            <Stat
+              label="Index price"
+              value={indexPrice > 0n ? formatBOT(indexPrice) : '—'}
+              unit="DGRAM / CIF"
+              detail={tvl > 0n && cifSupply > 0n ? 'TVL ÷ supply' : 'no deposits yet'}
+              icon={Coins}
+            />
+            <Stat
+              label="Your CIF"
+              value={formatBOTCompact(cifBalance)}
+              unit="CIF"
+              detail={`≈ ${formatBOTCompact(
+                indexPrice > 0n ? (cifBalance * indexPrice) / 10n ** 18n : 0n,
+              )} DGRAM`}
+              icon={Wallet}
+              tone="success"
+            />
+          </section>
 
-              <div className="group relative overflow-hidden rounded-2xl border border-primary/20 bg-surface-container-low p-4 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[10px] font-semibold text-primary">CIF SUPPLY</div>
-                <div className="font-mono text-base font-semibold text-on-surface">{formatBOTCompact(cifSupply)}</div>
-                <div className="mt-1 font-mono text-xs text-outline">CIF tokens minted</div>
-                <div className="mt-4 flex w-full flex-col gap-1">
-                  <div className="flex justify-between text-xs text-on-surface-variant">
-                    <span>Backing Ratio</span>
-                    <span className="text-primary">{cifSupply > 0n ? '100%' : '—'}</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                    <div className="h-1.5 rounded-full bg-primary" style={{ width: cifSupply > 0n ? '100%' : '0%' }}></div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="group relative overflow-hidden rounded-2xl bg-surface-container-low p-4 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[10px] font-semibold text-outline">INDEX PRICE</div>
-                <div className="font-mono text-sm font-semibold text-secondary-fixed">
-                  {indexPrice > 0n ? formatBOT(indexPrice) : '—'}
-                </div>
-                <div className="mt-1 font-mono text-xs text-outline">DGRAM per CIF</div>
-                <div className="mt-4 text-xs text-on-surface-variant">
-                  {tvl > 0n && cifSupply > 0n ? 'TVL / Total Supply' : 'No deposits yet'}
-                </div>
-              </div>
-
-              <div className="group relative overflow-hidden rounded-2xl border border-compute-active/20 bg-surface-container-low p-4 backdrop-blur-xl">
-                <div className="mb-2 font-mono text-[10px] font-semibold text-compute-active">YOUR CIF BALANCE</div>
-                <div className="font-mono text-base font-semibold text-on-surface">{formatBOTCompact(cifBalance)}</div>
-                <div className="mt-1 font-mono text-xs text-outline">CIF tokens</div>
-                <div className="mt-4 flex items-center justify-between">
-                  <span className="text-xs text-on-surface-variant">≈ {formatBOTCompact(indexPrice > 0n ? (BigInt(cifBalance) * BigInt(indexPrice)) / 10n**18n : 0n)} DGRAM</span>
-                </div>
-              </div>
-            </section>
-
-            {/* Deposit Form */}
-            {showDeposit && (
-              <div className="rounded-2xl bg-surface-container-low p-4 border border-primary/20">
-                <h3 className="mb-3 text-sm font-semibold text-on-surface">Deposit Revenue → Mint CIF</h3>
-                {nodes.filter(n => n.verified).length === 0 ? (
-                  <p className="text-sm text-on-surface-variant">
-                    No verified nodes found. Register and verify a node in Node Management first.
-                  </p>
+          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+            <div className="flex flex-col gap-6 xl:col-span-2">
+              {/* ── Deposits ── */}
+              <section>
+                <SectionHeader
+                  icon={Layers}
+                  title="Your deposits"
+                  description="Revenue you've tokenised, node by node"
+                />
+                {deposits.length === 0 ? (
+                  <EmptyState
+                    icon={Cpu}
+                    title="No deposits yet"
+                    description="Deposit revenue from a verified node to mint your first CIF."
+                    action={
+                      <Button variant="primary" icon={Plus} onClick={() => setShowDeposit(true)}>
+                        Deposit revenue
+                      </Button>
+                    }
+                  />
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <div>
-                      <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">Select Node</label>
-                      <select value={depositNodeId} onChange={e => setDepositNodeId(e.target.value)}
-                        className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary">
-                        {nodes.filter(n => n.verified).map(n => (
-                          <option key={n.id.toString()} value={n.id.toString()}>#{n.id.toString()} — {n.model}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">Amount (DGRAM)</label>
-                      <input type="text" value={depositAmount} onChange={e => setDepositAmount(e.target.value)}
-                        className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary" />
-                    </div>
-                    <div className="flex items-end">
-                      <button onClick={handleDeposit} disabled={txPending}
-                        className="w-full rounded-lg bg-primary px-6 py-2.5 font-mono text-sm font-semibold text-on-primary disabled:opacity-50">
-                        {txPending ? 'Submitting...' : 'Deposit & Mint CIF'}
-                      </button>
-                    </div>
-                  </div>
+                  <ul className="flex flex-col gap-2">
+                    {deposits.map((dep, idx) => {
+                      const { nodeId, amountWei: amount, mintedTokens: minted } = dep;
+                      return (
+                        <li key={idx}>
+                          <Card className="flex items-center justify-between gap-4 p-4">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-compute-active/12 text-compute-active">
+                                <Cpu className="h-4 w-4" aria-hidden />
+                              </span>
+                              <div className="min-w-0">
+                                <p
+                                  className="font-mono text-label text-on-surface"
+                                  title={nodeId?.toString()}
+                                >
+                                  {formatNodeId(nodeId ?? 0n)}
+                                </p>
+                                <p className="text-caption text-on-surface-variant">
+                                  <span className="font-mono">{formatBOT(amount)}</span> DGRAM
+                                  deposited
+                                </p>
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="font-mono text-label text-primary">
+                                {formatBOT(minted)}
+                              </p>
+                              <p className="text-eyebrow uppercase text-outline">CIF minted</p>
+                            </div>
+                          </Card>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
-                <p className="mt-3 text-xs text-outline">
-                  Mint ratio: 1 DGRAM = 1 CIF (MVP). AI-driven dynamic ratio coming in production.
-                </p>
-              </div>
-            )}
+              </section>
 
-            {/* Main Grid */}
-            <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
-              {/* Left: Your Deposits */}
-              <div className="flex flex-col gap-4 xl:col-span-8">
-                <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md md:p-8">
-                  <div className="mb-8 flex items-center justify-between">
-                    <div>
-                      <h2 className="text-base font-semibold text-on-surface">Your CIF Deposits</h2>
-                      <p className="mt-1 text-sm text-on-surface-variant">Revenue-backed tokenized positions.</p>
-                    </div>
-                  </div>
-
-                  {deposits.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center p-8">
-                      <Cpu className="mb-3 h-10 w-10 text-outline" />
-                      <p className="text-sm text-on-surface-variant">No deposits yet. Click "Deposit Revenue" to mint your first CIF tokens.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {deposits.map((dep: any, idx: number) => (
-                        <div key={idx} className="rounded-xl border border-outline-variant/10 bg-surface-container p-5 transition-colors hover:border-primary/20">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-compute-active/10 text-compute-active">
-                                <Cpu className="h-5 w-5" />
-                              </div>
-                              <div>
-                                <div className="font-mono text-sm text-on-surface">Node #{dep.nodeId?.toString() || dep[0]?.toString()}</div>
-                                <div className="text-xs text-on-surface-variant">
-                                  Deposited: {formatBOT(dep.amountWei || dep[1])} DGRAM
-                                </div>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-mono text-sm text-primary">{formatBOT(dep.mintedTokens || dep[2])}</div>
-                              <div className="font-mono text-[10px] uppercase text-outline">CIF Minted</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                {/* Withdraw Section */}
-                {cifBalance > 0n && (
-                  <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md md:p-8">
-                    <h2 className="mb-3 text-sm font-semibold text-on-surface">Withdraw (Burn CIF → DGRAM)</h2>
-                    <p className="mb-4 text-sm text-on-surface-variant">Burn CIF tokens to withdraw DGRAM. 0.5% withdrawal fee applies.</p>
-                    <div className="flex flex-col gap-3 md:flex-row">
-                      <input
-                        type="text"
-                        placeholder="Amount (CIF)"
-                        value={withdrawAmount}
-                        onChange={e => setWithdrawAmount(e.target.value)}
-                        className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary"
-                      />
-                      <button
-                        onClick={handleWithdraw}
-                        disabled={txPending || !withdrawAmount}
-                        className="rounded-lg border border-primary/30 bg-primary/10 px-6 py-2.5 font-mono text-sm font-semibold text-primary disabled:opacity-50"
+              {/* ── Withdraw ── */}
+              {cifBalance > 0n && (
+                <section>
+                  <SectionHeader
+                    icon={ArrowDownToLine}
+                    title="Withdraw"
+                    description="Burn CIF to take DGRAM back out"
+                  />
+                  <Card className="p-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <Field
+                        label="Amount to burn"
+                        hint={`Available: ${formatBOT(cifBalance)} CIF · redeemed at the index price, less a 0.5% fee`}
+                        error={amountError(withdrawAmount)}
+                        className="flex-1"
                       >
-                        {txPending ? 'Withdrawing...' : 'Burn & Withdraw'}
-                      </button>
+                        {(p) => (
+                          <Input
+                            {...p}
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={withdrawAmount}
+                            onChange={(e) => setWithdrawAmount(e.target.value)}
+                          />
+                        )}
+                      </Field>
+                      <Button
+                        variant="secondary"
+                        size="lg"
+                        loading={txPending}
+                        disabled={!isValidAmount(withdrawAmount)}
+                        onClick={() => void handleWithdraw()}
+                        className="mb-7 sm:mb-7"
+                      >
+                        {txPending ? 'Confirming' : 'Burn and withdraw'}
+                      </Button>
                     </div>
-                    <p className="mt-2 text-xs text-outline">
-                      Available: {formatBOT(cifBalance)} CIF · Fee: 0.5%
-                    </p>
-                  </section>
-                )}
-              </div>
-
-              {/* Right Column */}
-              <div className="flex flex-col gap-4 xl:col-span-4">
-                {/* How It Works */}
-                <section className="rounded-3xl bg-surface-container-low p-4 backdrop-blur-md">
-                  <h2 className="mb-3 text-sm font-semibold text-on-surface">How CIF Works</h2>
-                  <div className="space-y-4">
-                    <div className="flex gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">1</div>
-                      <div>
-                        <div className="text-sm font-semibold text-on-surface">Register & Verify Node</div>
-                        <p className="text-xs text-on-surface-variant">Register GPU hardware in Node Management, get verified.</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">2</div>
-                      <div>
-                        <div className="text-sm font-semibold text-on-surface">Deposit Revenue</div>
-                        <p className="text-xs text-on-surface-variant">Deposit DGRAM earned from compute jobs. Minted 1:1 as CIF tokens.</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">3</div>
-                      <div>
-                        <div className="text-sm font-semibold text-on-surface">Trade or Hold CIF</div>
-                        <p className="text-xs text-on-surface-variant">CIF tokens are transferable ERC-20. Trade on BDEX or hold for yield.</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">4</div>
-                      <div>
-                        <div className="text-sm font-semibold text-on-surface">Withdraw Anytime</div>
-                        <p className="text-xs text-on-surface-variant">Burn CIF to withdraw DGRAM. 0.5% fee stays in protocol treasury.</p>
-                      </div>
-                    </div>
-                  </div>
+                  </Card>
                 </section>
-
-                {/* RWA Badge */}
-                <section className="rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <ShieldCheck className="h-5 w-5 text-primary" />
-                    <h3 className="font-mono text-sm font-semibold uppercase tracking-wider text-primary">RWA Verified</h3>
-                  </div>
-                  <p className="text-sm text-on-surface-variant">
-                    CIF tokens represent fractional ownership of <strong className="text-on-surface">real compute revenue</strong> from verified GPU clusters on BOT Chain DePIN network.
-                  </p>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-surface-container p-3">
-                      <div className="font-mono text-[10px] uppercase text-outline">TVL</div>
-                      <div className="font-mono text-sm text-on-surface">{formatBOTCompact(tvl)}</div>
-                      <div className="font-mono text-[10px] text-outline">DGRAM</div>
-                    </div>
-                    <div className="rounded-lg bg-surface-container p-3">
-                      <div className="font-mono text-[10px] uppercase text-outline">CIF Supply</div>
-                      <div className="font-mono text-sm text-on-surface">{formatBOTCompact(cifSupply)}</div>
-                      <div className="font-mono text-[10px] text-outline">Tokens</div>
-                    </div>
-                  </div>
-                </section>
-              </div>
+              )}
             </div>
-          </>
+
+            {/* ── Side column ── */}
+            <div className="flex flex-col gap-4">
+              <Card className="p-5">
+                <h2 className="text-subtitle text-on-surface">How CIF works</h2>
+                {/* Numbered because this genuinely is a sequence — each step
+                    depends on the one before it. */}
+                <ol className="mt-4 flex flex-col gap-4">
+                  {STEPS.map((step, i) => (
+                    <li key={i} className="flex gap-3">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/12 font-mono text-caption font-semibold text-primary">
+                        {i + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-label text-on-surface">{step.title}</p>
+                        <p className="mt-0.5 text-caption text-on-surface-variant">{step.body}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </Card>
+
+              <Card className="border-primary/25 bg-primary/[0.04] p-5">
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  <h2 className="text-subtitle text-primary">Backed by real assets</h2>
+                </div>
+                <p className="mt-2 text-body text-on-surface-variant">
+                  Every CIF token represents a share of{' '}
+                  <strong className="font-medium text-on-surface">real compute revenue</strong>{' '}
+                  earned by verified GPU clusters on the network.
+                </p>
+                <dl className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-outline-variant bg-surface-container p-3">
+                    <dt className="text-eyebrow uppercase text-outline">Locked</dt>
+                    <dd className="mt-1 font-mono text-label text-on-surface">
+                      {formatBOTCompact(tvl)}{' '}
+                      <span className="text-caption text-outline">DGRAM</span>
+                    </dd>
+                  </div>
+                  <div className="rounded-lg border border-outline-variant bg-surface-container p-3">
+                    <dt className="text-eyebrow uppercase text-outline">Minted</dt>
+                    <dd className="mt-1 font-mono text-label text-on-surface">
+                      {formatBOTCompact(cifSupply)}{' '}
+                      <span className="text-caption text-outline">CIF</span>
+                    </dd>
+                  </div>
+                </dl>
+              </Card>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Deposit dialog ── */}
+      <Modal
+        open={showDeposit}
+        onClose={() => setShowDeposit(false)}
+        icon={Plus}
+        title="Deposit revenue"
+        description="Lock DGRAM earned by a verified node and mint CIF against it."
+        footer={
+          verifiedNodes.length > 0 ? (
+            <>
+              <Button
+                variant="primary"
+                fullWidth
+                loading={txPending}
+                disabled={!isValidAmount(depositAmount)}
+                onClick={() => void handleDeposit()}
+              >
+                {txPending ? 'Confirming' : 'Deposit and mint CIF'}
+              </Button>
+              <Button variant="ghost" onClick={() => setShowDeposit(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="secondary" fullWidth onClick={() => setShowDeposit(false)}>
+              Close
+            </Button>
+          )
+        }
+      >
+        {verifiedNodes.length === 0 ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title="No verified nodes"
+            description="Only attested nodes can deposit revenue. Register a node in My Nodes; the registry verifier attests it."
+            className="border-0 bg-transparent py-6"
+          />
+        ) : (
+          <div className="flex flex-col gap-4">
+            <Field label="Node">
+              {(p) => (
+                <Select
+                  {...p}
+                  value={depositNodeId}
+                  onChange={(e) => setDepositNodeId(e.target.value)}
+                >
+                  {verifiedNodes.map((n) => (
+                    <option key={n.id.toString()} value={n.id.toString()}>
+                      {formatNodeId(n.id)} — {n.model}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field
+              label="Amount (DGRAM)"
+              hint="Capped at the revenue this node has actually settled on chain."
+              error={amountError(depositAmount)}
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  type="text"
+                  inputMode="decimal"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                />
+              )}
+            </Field>
+
+            <div className="flex items-baseline justify-between rounded-lg border border-outline-variant bg-surface-container p-3.5">
+              <span className="text-label text-on-surface-variant">You receive</span>
+              <span className="font-mono text-title text-primary">
+                {isValidAmount(depositAmount) && indexPrice > 0n
+                  ? formatBOT((parseEther(depositAmount) * 10n ** 18n) / indexPrice, 4)
+                  : '0'}
+                <span className="ml-1.5 text-caption font-normal text-on-surface-variant">CIF</span>
+              </span>
+            </div>
+          </div>
         )}
-      </div>
-    </div>
+      </Modal>
+    </PageShell>
   );
 }

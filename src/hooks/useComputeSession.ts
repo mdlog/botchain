@@ -1,21 +1,26 @@
 /**
- * useComputeSession — hook linking on-chain jobs to off-chain compute execution.
+ * Links on-chain leases to off-chain execution on the provider's agent.
  *
- * Consumer flow:
- * 1. Lease compute on Marketplace → get jobId
- * 2. Open Compute Session tab → select active job
- * 3. Write code → POST to provider agent → get result
- * 4. View output, iterate
+ * Consumer flow: lease on Explore → pick the job here → send code to the
+ * provider's agent → read the result.
  *
- * Provider agent URL is resolved from:
- *   1. AgentRegistry contract (on-chain, auto-registered via cloudflared tunnel)
- *   2. Fallback static config map (for legacy providers)
+ * The agent URL comes from the on-chain AgentRegistry, with a static map as a
+ * fallback for providers that registered before it existed.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { getProviderAgentUrlAsync } from '@/config/providers';
 import { useWalletContext } from '@/context/WalletContext';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
-import { getProviderAgentUrlAsync } from '@/config/providers';
+import {
+  executeOnAgent,
+  fetchAgentInfo,
+  signChallenge,
+  type AgentInfo,
+  type ExecutionResult,
+} from '@/lib/agentApi';
+import { JOB_ACTIVE } from '@/lib/domain';
 
 export interface ComputeJobInfo {
   jobId: bigint;
@@ -23,167 +28,164 @@ export interface ComputeJobInfo {
   consumer: string;
   provider: string;
   jobType: string;
-  status: number; // 0=Pending, 1=Active, 2=Completed, 3=Cancelled, 4=Disputed
+  status: number;
   durationHours: bigint;
   startedAt: bigint;
   pricePerHourWei: bigint;
+  paymentAmount: bigint;
 }
 
-export interface ExecutionResult {
-  executionId: string;
-  status: 'completed' | 'error' | 'running';
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  duration: number; // ms
-}
+export type { ExecutionResult };
 
-// Cache: provider address → agent URL (avoids redundant chain reads)
+/** provider address → agent URL. Resolution is a chain read, so it is cached. */
 const agentUrlCache = new Map<string, string>();
 
 export function useComputeSession() {
-  const { address } = useWalletContext();
-  const { getJob, getTotalJobs } = useComputeMarketplace();
+  const { address, signMessage } = useWalletContext();
+  const { getJob, getJobs, getTotalJobs } = useComputeMarketplace();
 
   const [jobs, setJobs] = useState<ComputeJobInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
 
-  // Load consumer's active jobs
+  // Guards against a slow earlier load landing after a newer one and winning.
+  const loadGeneration = useRef(0);
+
   const loadJobs = useCallback(async () => {
-    if (!address) { setLoading(false); return; }
+    if (!address) {
+      setJobs([]);
+      setLoading(false);
+      return;
+    }
+
+    const generation = ++loadGeneration.current;
     setLoading(true);
     try {
-      const total = await getTotalJobs();
-      const consumerJobs: ComputeJobInfo[] = [];
-      for (let i = 1; i <= Number(total); i++) {
-        try {
-          const job = await getJob(BigInt(i)) as any;
-          if (job && job.consumer?.toLowerCase() === address.toLowerCase()) {
-            consumerJobs.push({
-              jobId: BigInt(i),
-              nodeId: job.nodeId,
-              consumer: job.consumer,
-              provider: job.provider,
-              jobType: job.jobType,
-              status: Number(job.status),
-              durationHours: job.durationHours,
-              startedAt: job.startedAt,
-              pricePerHourWei: job.pricePerHourWei,
-            });
-          }
-        } catch {}
-      }
-      // Sort: Active first, then by jobId desc
-      consumerJobs.sort((a, b) => {
-        if (a.status === 1 && b.status !== 1) return -1;
-        if (a.status !== 1 && b.status === 1) return 1;
-        return Number(b.jobId - a.jobId);
-      });
-      setJobs(consumerJobs);
+      const total = Number(await getTotalJobs());
+      const ids = Array.from({ length: total }, (_, i) => BigInt(i + 1));
+      const all = await getJobs(ids);
+
+      const mine = all
+        .map((job, index): ComputeJobInfo | null => {
+          if (job.consumer.toLowerCase() !== address.toLowerCase()) return null;
+          return {
+            jobId: ids[index],
+            nodeId: job.nodeId,
+            consumer: job.consumer,
+            provider: job.provider,
+            jobType: job.jobType,
+            status: Number(job.status),
+            durationHours: job.durationHours,
+            startedAt: job.startedAt,
+            pricePerHourWei: job.pricePerHourWei,
+            paymentAmount: job.paymentAmount,
+          };
+        })
+        .filter((job): job is ComputeJobInfo => job !== null)
+        .sort((a, b) => {
+          if (a.status === JOB_ACTIVE && b.status !== JOB_ACTIVE) return -1;
+          if (a.status !== JOB_ACTIVE && b.status === JOB_ACTIVE) return 1;
+          return Number(b.jobId - a.jobId);
+        });
+
+      if (generation === loadGeneration.current) setJobs(mine);
     } catch (err) {
-      console.error('[useComputeSession] Load jobs failed:', err);
+      console.error('[useComputeSession] load jobs failed:', err);
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
-  }, [address]);
+  }, [address, getJobs, getTotalJobs]);
 
   useEffect(() => {
-    loadJobs();
+    void loadJobs();
   }, [loadJobs]);
 
-  // Resolve agent URL for a provider (cached, async — checks on-chain first)
   const resolveAgentUrl = useCallback(async (providerAddress: string): Promise<string> => {
     if (!providerAddress) return '';
     const key = providerAddress.toLowerCase();
-    if (agentUrlCache.has(key)) return agentUrlCache.get(key)!;
+    const cached = agentUrlCache.get(key);
+    if (cached !== undefined) return cached;
     const url = await getProviderAgentUrlAsync(providerAddress);
     agentUrlCache.set(key, url);
     return url;
   }, []);
 
-  // Execute code on provider's machine via their agent
-  const executeCode = useCallback(async (
-    jobId: bigint,
-    nodeId: bigint,
-    language: 'python3' | 'node',
-    code: string,
-  ): Promise<ExecutionResult> => {
-    setExecuting(true);
-    try {
-      const job = jobs.find(j => j.jobId === jobId);
-      const providerAddr = job?.provider || '';
-      const url = await resolveAgentUrl(providerAddr);
+  // `executeCode` must read the current job list without being recreated on
+  // every load, or the editor would lose its handler mid-run.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
-      if (!url) {
-        return {
-          executionId: 'error',
-          status: 'error',
-          exitCode: -1,
-          stdout: '',
-          stderr: `No agent URL registered for provider ${providerAddr.slice(0, 10)}...`,
-          duration: 0,
-        };
-      }
+  const agentUrlForJob = useCallback(
+    (jobId: bigint): Promise<string> => {
+      const job = jobsRef.current.find((j) => j.jobId === jobId);
+      return resolveAgentUrl(job?.provider ?? '');
+    },
+    [resolveAgentUrl],
+  );
 
-      const res = await fetch(`${url}/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: Number(jobId), language, code }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return {
-          executionId: data.executionId || 'error',
-          status: 'error',
-          exitCode: -1,
-          stdout: '',
-          stderr: data.error || 'Execution failed',
-          duration: 0,
-        };
-      }
-      return {
-        executionId: data.executionId,
-        status: data.status || 'completed',
-        exitCode: data.exitCode ?? 0,
-        stdout: data.stdout || '',
-        stderr: data.stderr || '',
-        duration: data.duration || 0,
-      };
-    } catch (err: any) {
-      return {
+  const executeCode = useCallback(
+    async (jobId: bigint, language: 'python3' | 'node', code: string): Promise<ExecutionResult> => {
+      const fail = (stderr: string): ExecutionResult => ({
         executionId: 'error',
         status: 'error',
         exitCode: -1,
         stdout: '',
-        stderr: err.message || `Network error — is provider agent reachable?`,
-        duration: 0,
-      };
-    } finally {
-      setExecuting(false);
-    }
-  }, [jobs, resolveAgentUrl]);
+        stderr,
+        durationMs: 0,
+      });
 
-  // Get provider agent info for a specific job
-  const getProviderInfo = useCallback(async (jobId: bigint) => {
-    try {
-      const job = jobs.find(j => j.jobId === jobId);
-      const providerAddr = job?.provider || '';
-      const url = await resolveAgentUrl(providerAddr);
-      if (!url) return null;
-      const res = await fetch(`${url}/info`);
-      return await res.json();
-    } catch (err) {
-      return null;
-    }
-  }, [jobs, resolveAgentUrl]);
+      if (!address) return fail('Connect a wallet to run code on leased compute.');
 
-  // Get agent URL for a job (async — resolves from chain or fallback)
-  const getAgentUrl = useCallback(async (jobId: bigint): Promise<string> => {
-    const job = jobs.find(j => j.jobId === jobId);
-    const providerAddr = job?.provider || '';
-    return resolveAgentUrl(providerAddr);
-  }, [jobs, resolveAgentUrl]);
+      setExecuting(true);
+      try {
+        const job = jobsRef.current.find((j) => j.jobId === jobId);
+        const url = await resolveAgentUrl(job?.provider ?? '');
+        if (!url) {
+          return fail(`No agent endpoint registered for provider ${job?.provider ?? 'unknown'}`);
+        }
+
+        const auth = await signChallenge('execute', jobId, address, signMessage);
+        return await executeOnAgent(url, jobId, language, code, auth);
+      } catch (err) {
+        return fail(
+          err instanceof Error ? err.message : 'Network error — is the provider agent reachable?',
+        );
+      } finally {
+        setExecuting(false);
+      }
+    },
+    [address, resolveAgentUrl, signMessage],
+  );
+
+  const getProviderInfo = useCallback(
+    async (jobId: bigint): Promise<AgentInfo | null> => {
+      const url = await agentUrlForJob(jobId);
+      return url ? fetchAgentInfo(url) : null;
+    },
+    [agentUrlForJob],
+  );
+
+  const refreshJob = useCallback(
+    async (jobId: bigint) => {
+      const job = await getJob(jobId);
+      setJobs((current) =>
+        current.map((j) =>
+          j.jobId === jobId
+            ? {
+                ...j,
+                status: Number(job.status),
+                durationHours: job.durationHours,
+                startedAt: job.startedAt,
+                paymentAmount: job.paymentAmount,
+              }
+            : j,
+        ),
+      );
+    },
+    [getJob],
+  );
 
   return {
     jobs,
@@ -191,7 +193,8 @@ export function useComputeSession() {
     executing,
     executeCode,
     getProviderInfo,
-    getAgentUrl,
+    getAgentUrl: agentUrlForJob,
+    refreshJob,
     reloadJobs: loadJobs,
   };
 }

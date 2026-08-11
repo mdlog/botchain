@@ -1,122 +1,84 @@
-import { useState, useCallback } from 'react';
-import { type Address, type Hash } from 'viem';
-import { publicClient, getWalletClient, CONTRACTS, activeChain } from '@/config/chain';
-import { ABIS } from '@/config/contracts';
+import { useCallback } from 'react';
+import type { Address, Hash } from 'viem';
+
+import { computeIndexTokenAbi } from '@/config/abis';
+import { CONTRACTS, publicClient } from '@/config/chain';
+import { sendTx } from '@/lib/tx';
+
+const cif = { address: CONTRACTS.ComputeIndexToken, abi: computeIndexTokenAbi } as const;
 
 export function useComputeIndexToken() {
-  const [loading, setLoading] = useState(false);
+  const getBalance = useCallback(
+    (address: Address): Promise<bigint> =>
+      publicClient.readContract({ ...cif, functionName: 'balanceOf', args: [address] }),
+    [],
+  );
 
-  const getBalance = useCallback(async (address: Address) => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'balanceOf',
-      args: [address],
-    } as any);
-    return data as bigint;
-  }, []);
+  const getTotalSupply = useCallback(
+    (): Promise<bigint> => publicClient.readContract({ ...cif, functionName: 'totalSupply' }),
+    [],
+  );
 
-  const getTotalSupply = useCallback(async () => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'totalSupply',
-    } as any);
-    return data as bigint;
-  }, []);
+  const getTVL = useCallback(
+    (): Promise<bigint> => publicClient.readContract({ ...cif, functionName: 'totalValueLocked' }),
+    [],
+  );
 
-  const getTVL = useCallback(async () => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'totalValueLocked',
-    } as any);
-    return data as bigint;
-  }, []);
+  /**
+   * Backing per CIF, 18 decimals. Above 1e18 means settled compute revenue has
+   * accrued to the fund since issuance — that spread is the yield.
+   */
+  const getIndexPrice = useCallback(
+    (): Promise<bigint> => publicClient.readContract({ ...cif, functionName: 'getIndexPrice' }),
+    [],
+  );
 
-  const getIndexPrice = useCallback(async () => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'getIndexPrice',
-    } as any);
-    return data as bigint;
-  }, []);
+  const getDeposits = useCallback(
+    (provider: Address) =>
+      publicClient.readContract({ ...cif, functionName: 'getDeposits', args: [provider] }),
+    [],
+  );
 
-  const getDeposits = useCallback(async (provider: Address) => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'getDeposits',
-      args: [provider],
-    } as any);
-    return data;
-  }, []);
+  const getTotalDeposited = useCallback(
+    (provider: Address): Promise<bigint> =>
+      publicClient.readContract({ ...cif, functionName: 'totalDeposited', args: [provider] }),
+    [],
+  );
 
-  const getTotalDeposited = useCallback(async (provider: Address) => {
-    const data = await publicClient.readContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'totalDeposited',
-      args: [provider],
-    } as any);
-    return data as bigint;
-  }, []);
+  /** How much a node has already minted against; the cap is its settled revenue. */
+  const getDepositedPerNode = useCallback(
+    (nodeId: bigint): Promise<bigint> =>
+      publicClient.readContract({ ...cif, functionName: 'depositedPerNode', args: [nodeId] }),
+    [],
+  );
 
-  const depositRevenue = useCallback(async (
-    nodeId: bigint,
-    value: bigint
-  ): Promise<Hash | null> => {
-    const walletClient = getWalletClient();
-    if (!walletClient) return null;
-    const [account] = await walletClient.getAddresses();
-    const hash = await walletClient.writeContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'depositRevenue',
-      args: [nodeId],
-      value,
-      account,
-      chain: activeChain,
-    } as any);
-    return hash;
-  }, []);
+  const depositRevenue = useCallback(
+    (nodeId: bigint, value: bigint): Promise<Hash> =>
+      sendTx({ ...cif, functionName: 'depositRevenue', args: [nodeId], value }),
+    [],
+  );
 
-  const withdraw = useCallback(async (amount: bigint): Promise<Hash | null> => {
-    const walletClient = getWalletClient();
-    if (!walletClient) return null;
-    const [account] = await walletClient.getAddresses();
-    const hash = await walletClient.writeContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'withdraw',
-      args: [amount],
-      account,
-      chain: activeChain,
-    } as any);
-    return hash;
-  }, []);
+  const withdraw = useCallback(
+    (amount: bigint): Promise<Hash> => sendTx({ ...cif, functionName: 'withdraw', args: [amount] }),
+    [],
+  );
 
-  const transfer = useCallback(async (
-    to: Address,
-    amount: bigint
-  ): Promise<Hash | null> => {
-    const walletClient = getWalletClient();
-    if (!walletClient) return null;
-    const [account] = await walletClient.getAddresses();
-    const hash = await walletClient.writeContract({
-      address: CONTRACTS.ComputeIndexToken,
-      abi: ABIS.ComputeIndexToken as any,
-      functionName: 'transfer',
-      args: [to, amount],
-      account,
-      chain: activeChain,
-    } as any);
-    return hash;
-  }, []);
+  const transfer = useCallback(
+    (to: Address, amount: bigint): Promise<Hash> =>
+      sendTx({ ...cif, functionName: 'transfer', args: [to, amount] }),
+    [],
+  );
 
   return {
-    loading, getBalance, getTotalSupply, getTVL, getIndexPrice,
-    getDeposits, getTotalDeposited, depositRevenue, withdraw, transfer,
+    getBalance,
+    getTotalSupply,
+    getTVL,
+    getIndexPrice,
+    getDeposits,
+    getTotalDeposited,
+    getDepositedPerNode,
+    depositRevenue,
+    withdraw,
+    transfer,
   };
 }

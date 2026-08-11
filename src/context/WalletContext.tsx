@@ -5,6 +5,7 @@ interface WalletContextValue extends WalletState {
   connect: () => Promise<void>;
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
+  signMessage: (message: string) => Promise<string>;
   hasEthereum: boolean;
 }
 
@@ -12,11 +13,7 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const wallet = useWallet();
-  return (
-    <WalletContext.Provider value={wallet}>
-      {children}
-    </WalletContext.Provider>
-  );
+  return <WalletContext.Provider value={wallet}>{children}</WalletContext.Provider>;
 }
 
 export function useWalletContext(): WalletContextValue {

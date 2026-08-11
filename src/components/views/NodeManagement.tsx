@@ -1,10 +1,44 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { PlusCircle, Activity, Cpu, AlertTriangle, ShieldCheck, Briefcase, CheckCircle, Play } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  PlusCircle,
+  Activity,
+  Cpu,
+  AlertTriangle,
+  ShieldCheck,
+  Briefcase,
+  CheckCircle2,
+  Play,
+  Power,
+  Server,
+  Wallet,
+  ScanSearch,
+} from 'lucide-react';
+import { PageShell, PageHeader, SectionHeader } from '@/components/layout/PageShell';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Badge, StatusDot } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { Stat } from '@/components/ui/Stat';
+import { Skeleton, SkeletonStats } from '@/components/ui/Skeleton';
 import { useWalletContext } from '@/context/WalletContext';
+import { useToast } from '@/context/ToastContext';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
-import { formatBOT, formatBOTCompact, timeAgo, formatAddress } from '@/lib/format';
+import { formatBOT, formatBOTCompact, formatAddress, formatNodeId } from '@/lib/format';
+import {
+  JOB_ACTIVE,
+  JOB_PENDING,
+  NODE_STATUS_ACTIVE,
+  jobStatus,
+  leaseCountdown,
+} from '@/lib/domain';
+import { describeTxError } from '@/lib/tx';
+import { fetchAgentInfo } from '@/lib/agentApi';
 import { detectHardware, getTflopsForModel, type HardwareInfo } from '@/lib/hardware-detect';
+import { getProviderAgentUrl } from '@/config/providers';
+import { cn } from '@/lib/utils';
 
 interface NodeRow {
   nodeId: bigint;
@@ -29,8 +63,6 @@ const GPU_OPTIONS = [
   { model: 'AMD Radeon GPU', vram: 12, tflops: 10 },
   { model: 'CPU Only', vram: 0, tflops: 0 },
 ];
-
-import { getProviderAgentUrl } from '@/config/providers';
 
 // TFLOPS lookup for per-GPU estimation
 const GPU_TFLOPS: Record<string, number> = {
@@ -60,8 +92,13 @@ function getTflopsForGpuModel(model: string): number {
 }
 
 const REGIONS = ['US-EAST', 'US-WEST', 'EU-CENTRAL', 'EU-WEST', 'AP-SOUTH', 'AP-NORTHEAST'];
-const STATUS_LABELS = ['Inactive', 'Active', 'Busy', 'Offline'];
-const STATUS_COLORS = ['bg-compute-idle', 'bg-compute-active', 'bg-compute-idle', 'bg-compute-down'];
+
+const NODE_STATUS = [
+  { label: 'Inactive', tone: 'neutral' as const },
+  { label: 'Active', tone: 'success' as const },
+  { label: 'Busy', tone: 'accent' as const },
+  { label: 'Offline', tone: 'danger' as const },
+];
 
 interface JobRow {
   jobId: bigint;
@@ -75,12 +112,11 @@ interface JobRow {
   paymentAmount: bigint;
 }
 
-const JOB_LABELS = ['Pending', 'Active', 'Completed', 'Cancelled', 'Disputed'];
-const JOB_COLORS = ['text-yellow-400', 'text-compute-active', 'text-primary', 'text-outline', 'text-compute-down'];
-
 export function NodeManagement() {
   const { address } = useWalletContext();
-  const { getProviderNodes, getNode, registerNode, updateNodeStatus, verifyNode } = useComputeRegistry();
+  const toast = useToast();
+  const { getProviderNodes, getNode, getVerifier, registerNode, updateNodeStatus, verifyNode } =
+    useComputeRegistry();
   const { getJob, getTotalJobs, acceptJob, completeJob } = useComputeMarketplace();
 
   const [loading, setLoading] = useState(true);
@@ -95,31 +131,78 @@ export function NodeManagement() {
   const [formVram, setFormVram] = useState(GPU_OPTIONS[0].vram);
   const [formTflops, setFormTflops] = useState(GPU_OPTIONS[0].tflops);
   const [formRegion, setFormRegion] = useState(REGIONS[0]);
-  const [formGpuCount, setFormGpuCount] = useState(1);
+  const [, setFormGpuCount] = useState(1);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [dupError, setDupError] = useState<string | null>(null);
-  const [agentGpuInfo, setAgentGpuInfo] = useState<any>(null);
-  const [tick, setTick] = useState(0); // forces re-render every second for countdown
+  // Current unix second. Held in state rather than read during render so the
+  // countdown stays a pure function of its props.
+  const [tick, setTick] = useState(() => Math.floor(Date.now() / 1000));
+
+  /**
+   * Attestation is the registry verifier's call, not the provider's — a node
+   * that could vouch for itself made the "verified" badge worthless. Offering
+   * the button to everyone would just be a guaranteed revert, so the action
+   * only appears for the wallet that actually holds the role.
+   */
+  const [verifier, setVerifier] = useState<string | null>(null);
+  useEffect(() => {
+    getVerifier()
+      .then(setVerifier)
+      .catch((err: unknown) => console.warn('[NodeManagement] verifier lookup failed:', err));
+  }, [getVerifier]);
+  const isVerifier = verifier !== null && address?.toLowerCase() === verifier.toLowerCase();
 
   // Live countdown ticker
   useEffect(() => {
-    const hasActiveJobs = jobs.some(j => j.status === 1);
+    const hasActiveJobs = jobs.some((j) => j.status === JOB_ACTIVE);
     if (!hasActiveJobs) return;
-    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    const interval = setInterval(() => setTick(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(interval);
   }, [jobs]);
 
+  async function reloadNodes() {
+    if (!address) return;
+    const nodeIds = await getProviderNodes(address);
+    const details: NodeRow[] = [];
+    for (const id of nodeIds) {
+      try {
+        const node = await getNode(id);
+        if (node) {
+          details.push({
+            nodeId: id,
+            provider: node.provider,
+            model: node.specs?.model || 'Unknown',
+            vramGB: Number(node.specs?.vramGB || 0),
+            tflops: Number(node.specs?.tflops || 0),
+            region: node.specs?.region || 'Unknown',
+            status: Number(node.status),
+            totalRevenue: node.totalRevenue,
+            verified: node.verified,
+            registeredAt: Number(node.registeredAt),
+            lastHeartbeat: Number(node.lastHeartbeat),
+          });
+        }
+      } catch (err) {
+        console.warn('[NodeManagement] skipping unreadable node', err);
+      }
+    }
+    setNodes(details);
+  }
+
   // Load provider's jobs
   async function loadJobs() {
-    if (!address) { setJobsLoading(false); return; }
+    if (!address) {
+      setJobsLoading(false);
+      return;
+    }
     setJobsLoading(true);
     try {
       const total = await getTotalJobs();
       const jobList: JobRow[] = [];
       for (let i = 1; i <= Number(total); i++) {
         try {
-          const job = await getJob(BigInt(i)) as any;
+          const job = await getJob(BigInt(i));
           if (job && job.provider?.toLowerCase() === address.toLowerCase()) {
             jobList.push({
               jobId: BigInt(i),
@@ -133,7 +216,9 @@ export function NodeManagement() {
               paymentAmount: job.paymentAmount,
             });
           }
-        } catch {}
+        } catch (err) {
+          console.warn('[NodeManagement] skipping unreadable job', i, err);
+        }
       }
       setJobs(jobList);
     } catch (err) {
@@ -144,17 +229,40 @@ export function NodeManagement() {
   }
 
   useEffect(() => {
-    loadJobs();
+    void loadJobs();
+  }, [address]);
+
+  useEffect(() => {
+    async function loadNodes() {
+      if (!address) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        await reloadNodes();
+      } catch (err) {
+        console.error('[NodeManagement] Load failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    void loadNodes();
   }, [address]);
 
   async function handleAcceptJob(jobId: bigint) {
     setTxPending(true);
     try {
       await acceptJob(jobId);
-      await new Promise(r => setTimeout(r, 2000));
-      setJobs(prev => prev.map(j => j.jobId === jobId ? { ...j, status: 1, startedAt: Math.floor(Date.now()/1000) } : j));
+      // startedAt comes from the block, not the browser clock — reading it back
+      // is the only way the countdown matches what the contract will settle on.
+      await loadJobs();
+      toast.success(`Job #${jobId.toString()} accepted`, {
+        description: 'The consumer can now run workloads on this node.',
+      });
     } catch (err) {
-      console.error('[NodeManagement] Accept job failed:', err);
+      console.error('[NodeManagement] accept job failed:', err);
+      toast.error('Job was not accepted', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
@@ -164,77 +272,17 @@ export function NodeManagement() {
     setTxPending(true);
     try {
       await completeJob(jobId);
-      await new Promise(r => setTimeout(r, 3000));
-      setJobs(prev => prev.map(j => j.jobId === jobId ? { ...j, status: 2 } : j));
-      // Reload nodes to update revenue
-      if (address) {
-        const nodeIds = await getProviderNodes(address);
-        const details: NodeRow[] = [];
-        for (const id of nodeIds) {
-          try {
-            const node = await getNode(id) as any;
-            if (node) {
-              details.push({
-                nodeId: id,
-                provider: node.provider,
-                model: node.specs?.model || 'Unknown',
-                vramGB: Number(node.specs?.vramGB || 0),
-                tflops: Number(node.specs?.tflops || 0),
-                region: node.specs?.region || 'Unknown',
-                status: Number(node.status),
-                totalRevenue: node.totalRevenue,
-                verified: node.verified,
-                registeredAt: Number(node.registeredAt),
-                lastHeartbeat: Number(node.lastHeartbeat),
-              });
-            }
-          } catch {}
-        }
-        setNodes(details);
-      }
+      await Promise.all([loadJobs(), reloadNodes()]);
+      toast.success(`Job #${jobId.toString()} completed`, {
+        description: 'Paid for the time actually used; the balance went back to the consumer.',
+      });
     } catch (err) {
-      console.error('[NodeManagement] Complete job failed:', err);
+      console.error('[NodeManagement] complete job failed:', err);
+      toast.error('Job was not completed', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
   }
-
-  useEffect(() => {
-    async function loadNodes() {
-      if (!address) { setLoading(false); return; }
-      setLoading(true);
-      try {
-        const nodeIds = await getProviderNodes(address);
-        const details: NodeRow[] = [];
-        for (const id of nodeIds) {
-          try {
-            const node = await getNode(id) as any;
-            if (node) {
-              details.push({
-                nodeId: id,
-                provider: node.provider,
-                model: node.specs?.model || 'Unknown',
-                vramGB: Number(node.specs?.vramGB || 0),
-                tflops: Number(node.specs?.tflops || 0),
-                region: node.specs?.region || 'Unknown',
-                status: Number(node.status),
-                totalRevenue: node.totalRevenue,
-                verified: node.verified,
-                registeredAt: Number(node.registeredAt),
-                lastHeartbeat: Number(node.lastHeartbeat),
-              });
-            }
-          } catch {}
-        }
-        setNodes(details);
-      } catch (err) {
-        console.error('[NodeManagement] Load failed:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadNodes();
-  }, [address]);
 
   async function handleAutoDetect() {
     setDetecting(true);
@@ -242,38 +290,22 @@ export function NodeManagement() {
     try {
       // First: try agent-side detection via provider's own agent
       const agentUrl = address ? getProviderAgentUrl(address) : '';
-      let agentGpus: any = null;
-      if (agentUrl) {
-        try {
-          const resp = await fetch(`${agentUrl}/info`);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data.gpu_summary && data.gpu_summary.count > 0) {
-              agentGpus = data.gpu_summary;
-              setAgentGpuInfo(agentGpus);
-            }
-          }
-        } catch {}
-      }
+      const agentInfo = agentUrl ? await fetchAgentInfo(agentUrl) : null;
+      const agentGpus = agentInfo?.gpuSummary?.count ? agentInfo.gpuSummary : null;
 
       if (agentGpus) {
         // Agent detected GPUs via nvidia-smi — use this (most accurate)
-        const unifiedModel: string = agentGpus.unified_model;
-        const count: number = agentGpus.count;
-        const totalVramMB: number = agentGpus.total_vram_mb;
-        const totalVramGB = Math.round(totalVramMB / 1024);
+        const unifiedModel = agentGpus.unifiedModel ?? '';
+        const count = agentGpus.count ?? 1;
+        const totalVramGB = Math.round((agentGpus.totalVramMb ?? 0) / 1024);
 
         // Estimate TFLOPS: per-GPU × count
-        const firstModel: string = agentGpus.models[0] || unifiedModel;
-        const perTflops = getTflopsForGpuModel(firstModel);
-        const totalTflops = Math.round(perTflops * count * 10) / 10;
+        const firstModel = agentGpus.models?.[0] ?? unifiedModel;
+        const totalTflops = Math.round(getTflopsForGpuModel(firstModel) * count * 10) / 10;
 
-        // Check duplicate
-        const existing = nodes.find(n =>
-          n.model.toLowerCase() === unifiedModel.toLowerCase()
-        );
+        const existing = nodes.find((n) => n.model.toLowerCase() === unifiedModel.toLowerCase());
         if (existing) {
-          setDupError(`"${unifiedModel}" is already registered as Node #${existing.nodeId.toString()}.`);
+          setDupError(`${unifiedModel} is already registered as ${formatNodeId(existing.nodeId)}.`);
           return;
         }
 
@@ -286,7 +318,7 @@ export function NodeManagement() {
           vramGB: totalVramGB,
           cpuCores: navigator.hardwareConcurrency || 0,
           cpuModel: '',
-          ramGB: (navigator as any).deviceMemory || 0,
+          ramGB: navigator.deviceMemory ?? 0,
           storageGB: 0,
           screen: '',
           detected: true,
@@ -294,25 +326,25 @@ export function NodeManagement() {
           fingerprint: '',
           hasGpu: true,
         });
+        toast.success('Hardware detected from your agent', {
+          description: `${count}× ${firstModel} · ${totalVramGB} GB VRAM`,
+        });
         return;
       }
 
       // Fallback: browser WebGL detection (single GPU only)
       const info = await detectHardware();
       setHardware(info);
-      setAgentGpuInfo(null);
       setFormGpuCount(1);
       const existingLabel = info.hasGpu ? info.gpuModel : `CPU-${info.cpuCores}cores`;
-      const existing = nodes.find(n =>
-        n.model.toLowerCase() === existingLabel.toLowerCase()
-      );
+      const existing = nodes.find((n) => n.model.toLowerCase() === existingLabel.toLowerCase());
       if (existing) {
-        setDupError(`"${existingLabel}" is already registered as Node #${existing.nodeId.toString()}.`);
+        setDupError(`${existingLabel} is already registered as ${formatNodeId(existing.nodeId)}.`);
         return;
       }
       if (info.hasGpu) {
-        const match = GPU_OPTIONS.find(g =>
-          info.gpuModel.toLowerCase().includes(g.model.toLowerCase().replace('nvidia ', ''))
+        const match = GPU_OPTIONS.find((g) =>
+          info.gpuModel.toLowerCase().includes(g.model.toLowerCase().replace('nvidia ', '')),
         );
         if (match) {
           setFormModel(match.model);
@@ -328,8 +360,14 @@ export function NodeManagement() {
         setFormVram(0);
         setFormTflops(getTflopsForModel('CPU Only', info.cpuCores, false));
       }
+      toast.info('Hardware read from your browser', {
+        description: 'Browser detection is approximate — check the values before registering.',
+      });
     } catch (err) {
       console.error('[NodeManagement] Auto-detect failed:', err);
+      toast.error('Could not detect hardware', {
+        description: 'Enter the specs manually instead.',
+      });
     } finally {
       setDetecting(false);
     }
@@ -337,50 +375,27 @@ export function NodeManagement() {
 
   async function handleRegister() {
     if (!address) return;
-    // Final duplicate check
-    const checkModel = formModel;
-    const existing = nodes.find(n => 
-      n.model.toLowerCase() === checkModel.toLowerCase()
-    );
+    const existing = nodes.find((n) => n.model.toLowerCase() === formModel.toLowerCase());
     if (existing) {
-      setDupError(`"${checkModel}" is already registered as Node #${existing.nodeId.toString()}.`);
+      setDupError(`${formModel} is already registered as ${formatNodeId(existing.nodeId)}.`);
       return;
     }
     setDupError(null);
     setTxPending(true);
     try {
-      const hash = await registerNode(formModel, formVram, formTflops, formRegion);
-      if (hash) {
-        // Wait for confirmation then reload
-        await new Promise(r => setTimeout(r, 3000));
-        setShowRegister(false);
-        // Reload nodes
-        const nodeIds = await getProviderNodes(address);
-        const details: NodeRow[] = [];
-        for (const id of nodeIds) {
-          try {
-            const node = await getNode(id) as any;
-            if (node) {
-              details.push({
-                nodeId: id,
-                provider: node.provider,
-                model: node.specs?.model || 'Unknown',
-                vramGB: Number(node.specs?.vramGB || 0),
-                tflops: Number(node.specs?.tflops || 0),
-                region: node.specs?.region || 'Unknown',
-                status: Number(node.status),
-                totalRevenue: node.totalRevenue,
-                verified: node.verified,
-                registeredAt: Number(node.registeredAt),
-                lastHeartbeat: Number(node.lastHeartbeat),
-              });
-            }
-          } catch {}
-        }
-        setNodes(details);
-      }
+      // TFLOPS is a uint16 on chain; auto-detection can produce a fraction,
+      // which throws while encoding before a transaction is ever built.
+      const hash = await registerNode(formModel, formVram, Math.round(formTflops), formRegion);
+      setShowRegister(false);
+      setHardware(null);
+      await reloadNodes();
+      toast.success('Node registered', {
+        description: `${formModel} in ${formRegion} is on-chain. Set it active, then the registry verifier attests it.`,
+        txHash: hash,
+      });
     } catch (err) {
-      console.error('[NodeManagement] Register failed:', err);
+      console.error('[NodeManagement] register failed:', err);
+      toast.error('Node was not registered', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
@@ -390,11 +405,21 @@ export function NodeManagement() {
     setTxPending(true);
     try {
       await updateNodeStatus(nodeId, newStatus);
-      await new Promise(r => setTimeout(r, 2000));
-      // Update local state
-      setNodes(prev => prev.map(n => n.nodeId === nodeId ? { ...n, status: newStatus } : n));
+      setNodes((prev) => prev.map((n) => (n.nodeId === nodeId ? { ...n, status: newStatus } : n)));
+      toast.success(
+        newStatus === NODE_STATUS_ACTIVE
+          ? `${formatNodeId(nodeId)} is now active`
+          : `${formatNodeId(nodeId)} is now inactive`,
+        {
+          description:
+            newStatus === NODE_STATUS_ACTIVE
+              ? 'It will appear in Explore and can receive jobs.'
+              : 'It stops appearing in Explore until you set it active again.',
+        },
+      );
     } catch (err) {
-      console.error('[NodeManagement] Status change failed:', err);
+      console.error('[NodeManagement] status change failed:', err);
+      toast.error('Status was not changed', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
@@ -404,387 +429,557 @@ export function NodeManagement() {
     setTxPending(true);
     try {
       await verifyNode(nodeId);
-      await new Promise(r => setTimeout(r, 2000));
-      setNodes(prev => prev.map(n => n.nodeId === nodeId ? { ...n, verified: true } : n));
+      setNodes((prev) => prev.map((n) => (n.nodeId === nodeId ? { ...n, verified: true } : n)));
+      toast.success(`${formatNodeId(nodeId)} attested`, {
+        description: 'Attested nodes can be leased and can deposit revenue to mint CIF.',
+      });
     } catch (err) {
-      console.error('[NodeManagement] Verify failed:', err);
+      console.error('[NodeManagement] attestation failed:', err);
+      toast.error('Node was not attested', { description: describeTxError(err) });
     } finally {
       setTxPending(false);
     }
   }
 
-  if (loading) {
+  const header = (
+    <PageHeader
+      title="My Nodes"
+      description="Register compute hardware on-chain, control availability, and settle the jobs it runs."
+      actions={
+        address && (
+          <Button variant="primary" icon={PlusCircle} onClick={() => setShowRegister(true)}>
+            Register node
+          </Button>
+        )
+      }
+    />
+  );
+
+  if (!address) {
     return (
-      <div className="flex h-full items-center justify-center pt-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+      <PageShell>
+        {header}
+        <EmptyState
+          icon={Server}
+          title="Connect a wallet to manage nodes"
+          description="Registering hardware and settling jobs are on-chain actions signed by your account."
+        />
+      </PageShell>
+    );
+  }
+
+  const totalRevenue = nodes.reduce((s, n) => s + n.totalRevenue, 0n);
+  const pendingJobs = jobs.filter((j) => j.status === 0).length;
+
+  return (
+    <PageShell>
+      {header}
+
+      {loading ? (
+        <div className="flex flex-col gap-4">
+          <SkeletonStats count={4} />
+          <Skeleton className="h-72 w-full rounded-xl" />
+        </div>
+      ) : nodes.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title="No nodes registered"
+          description="Register your GPU or CPU hardware to start receiving compute jobs from the network."
+          action={
+            <Button variant="primary" icon={PlusCircle} onClick={() => setShowRegister(true)}>
+              Register your first node
+            </Button>
+          }
+        />
+      ) : (
+        <div className="flex flex-col gap-8">
+          {/* ── Fleet ── */}
+          <section>
+            <SectionHeader
+              icon={Activity}
+              title="Fleet"
+              description="Your registered hardware at a glance"
+            />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Stat label="Nodes" value={nodes.length.toString()} icon={Server} />
+              <Stat
+                label="Active"
+                value={nodes.filter((n) => n.status === 1).length.toString()}
+                detail="visible in Explore"
+                icon={Activity}
+                tone="success"
+              />
+              <Stat
+                label="Verified"
+                value={nodes.filter((n) => n.verified).length.toString()}
+                detail="eligible for CIF"
+                icon={ShieldCheck}
+                tone="accent"
+              />
+              <Stat
+                label="Lifetime revenue"
+                value={formatBOTCompact(totalRevenue)}
+                unit="DGRAM"
+                icon={Wallet}
+                tone="success"
+              />
+            </div>
+          </section>
+
+          {/* ── Node table ── */}
+          <section>
+            <SectionHeader
+              icon={Cpu}
+              title="Nodes"
+              description="Availability and earnings per machine"
+            />
+            <Card className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[52rem] border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-outline-variant bg-surface-container/50">
+                      <Th>Node</Th>
+                      <Th>Status</Th>
+                      <Th>Specs</Th>
+                      <Th>Region</Th>
+                      <Th className="text-right">Revenue</Th>
+                      <Th className="text-right">Actions</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nodes.map((node) => {
+                      const status = NODE_STATUS[node.status] ?? NODE_STATUS[0];
+                      return (
+                        <tr
+                          key={node.nodeId.toString()}
+                          className="border-b border-outline-variant transition-colors last:border-0 hover:bg-surface-container/40"
+                        >
+                          <Td>
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-container text-on-surface-variant">
+                                <Cpu className="h-4 w-4" aria-hidden />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-label text-on-surface">{node.model}</p>
+                                <p
+                                  className="font-mono text-caption text-outline"
+                                  title={node.nodeId.toString()}
+                                >
+                                  {formatNodeId(node.nodeId)}
+                                </p>
+                              </div>
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge tone={status.tone}>
+                                <StatusDot
+                                  tone={status.tone}
+                                  live={node.status === 1}
+                                  className="mr-0.5"
+                                />
+                                {status.label}
+                              </Badge>
+                              {node.verified && (
+                                <ShieldCheck
+                                  className="h-3.5 w-3.5 text-compute-active"
+                                  aria-label="Verified"
+                                />
+                              )}
+                            </div>
+                          </Td>
+                          <Td>
+                            <p className="font-mono text-caption text-on-surface">
+                              {node.vramGB > 0 ? `${node.vramGB} GB VRAM` : 'CPU only'}
+                            </p>
+                            <p className="font-mono text-caption text-outline">
+                              {node.tflops} TFLOPS
+                            </p>
+                          </Td>
+                          <Td>
+                            <span className="text-caption text-on-surface-variant">
+                              {node.region}
+                            </span>
+                          </Td>
+                          <Td className="text-right">
+                            <p className="font-mono text-label text-primary">
+                              {formatBOT(node.totalRevenue)}
+                            </p>
+                            <p className="text-caption text-outline">DGRAM lifetime</p>
+                          </Td>
+                          <Td className="text-right">
+                            <div className="flex justify-end gap-1.5">
+                              {node.status !== 1 ? (
+                                <Button
+                                  size="sm"
+                                  variant="success"
+                                  icon={Play}
+                                  disabled={txPending}
+                                  onClick={() =>
+                                    void handleStatusChange(node.nodeId, NODE_STATUS_ACTIVE)
+                                  }
+                                >
+                                  Activate
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  icon={Power}
+                                  disabled={txPending}
+                                  onClick={() => void handleStatusChange(node.nodeId, 0)}
+                                >
+                                  Pause
+                                </Button>
+                              )}
+                              {!node.verified &&
+                                (isVerifier ? (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    icon={ShieldCheck}
+                                    disabled={txPending}
+                                    onClick={() => void handleVerify(node.nodeId)}
+                                  >
+                                    Attest
+                                  </Button>
+                                ) : (
+                                  <span
+                                    className="text-caption text-outline"
+                                    title={verifier ? `Registry verifier: ${verifier}` : undefined}
+                                  >
+                                    Awaiting attestation
+                                  </span>
+                                ))}
+                            </div>
+                          </Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </section>
+
+          {/* ── Job queue ── */}
+          <section>
+            <SectionHeader
+              icon={Briefcase}
+              title="Job queue"
+              description="Work consumers have booked on your nodes"
+              actions={
+                pendingJobs > 0 ? (
+                  <Badge tone="warning">{pendingJobs} awaiting you</Badge>
+                ) : undefined
+              }
+            />
+
+            {jobsLoading ? (
+              <Skeleton className="h-40 w-full rounded-xl" />
+            ) : jobs.length === 0 ? (
+              <EmptyState
+                icon={Briefcase}
+                title="No jobs yet"
+                description="When someone leases your compute from Explore, the job lands here for you to accept."
+              />
+            ) : (
+              <Card className="overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[52rem] border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-outline-variant bg-surface-container/50">
+                        <Th>Job</Th>
+                        <Th>Node</Th>
+                        <Th>Workload</Th>
+                        <Th>Consumer</Th>
+                        <Th className="text-right">Payment</Th>
+                        <Th className="text-right">Action</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobs.map((job) => {
+                        const status = jobStatus(job.status);
+                        return (
+                          <tr
+                            key={job.jobId.toString()}
+                            className="border-b border-outline-variant transition-colors last:border-0 hover:bg-surface-container/40"
+                          >
+                            <Td>
+                              <p className="font-mono text-label text-on-surface">
+                                #{job.jobId.toString()}
+                              </p>
+                              <Badge tone={status.tone} className="mt-1">
+                                {status.label}
+                              </Badge>
+                            </Td>
+                            <Td>
+                              <span
+                                className="font-mono text-caption text-on-surface-variant"
+                                title={job.nodeId.toString()}
+                              >
+                                {formatNodeId(job.nodeId)}
+                              </span>
+                            </Td>
+                            <Td>
+                              <p className="text-caption text-on-surface">{job.jobType}</p>
+                              <p className="font-mono text-caption text-outline">
+                                {job.durationHours.toString()}h booked
+                              </p>
+                            </Td>
+                            <Td>
+                              <span
+                                className="font-mono text-caption text-on-surface-variant"
+                                title={job.consumer}
+                              >
+                                {formatAddress(job.consumer)}
+                              </span>
+                            </Td>
+                            <Td className="text-right">
+                              <p className="font-mono text-label text-primary">
+                                {formatBOT(BigInt(job.pricePerHourWei) * BigInt(job.durationHours))}
+                              </p>
+                              <p className="text-caption text-outline">DGRAM total</p>
+                            </Td>
+                            <Td className="text-right">
+                              <JobAction
+                                job={job}
+                                tick={tick}
+                                txPending={txPending}
+                                onAccept={() => void handleAcceptJob(job.jobId)}
+                                onComplete={() => void handleCompleteJob(job.jobId)}
+                              />
+                            </Td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* ── Register dialog ── */}
+      <Modal
+        open={showRegister}
+        onClose={() => setShowRegister(false)}
+        icon={Server}
+        title="Register a compute node"
+        description="Publish your hardware to the on-chain registry so consumers can lease it."
+        className="sm:max-w-2xl"
+        footer={
+          <>
+            <Button
+              variant="primary"
+              fullWidth
+              loading={txPending}
+              onClick={() => void handleRegister()}
+            >
+              {txPending ? 'Confirming' : 'Register on-chain'}
+            </Button>
+            <Button variant="ghost" onClick={() => setShowRegister(false)}>
+              Cancel
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Button
+            variant="secondary"
+            icon={ScanSearch}
+            loading={detecting}
+            onClick={() => void handleAutoDetect()}
+          >
+            {detecting ? 'Detecting hardware' : 'Detect my hardware'}
+          </Button>
+
+          {dupError && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-compute-down/30 bg-compute-down/8 px-3.5 py-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-compute-down" aria-hidden />
+              <p className="text-caption text-on-surface-variant">{dupError}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="GPU model">
+              {(p) => (
+                <Select
+                  {...p}
+                  value={GPU_OPTIONS.some((g) => g.model === formModel) ? formModel : ''}
+                  onChange={(e) => {
+                    const opt = GPU_OPTIONS.find((g) => g.model === e.target.value);
+                    if (!opt) return;
+                    setFormModel(opt.model);
+                    setFormVram(opt.vram);
+                    setFormTflops(opt.tflops);
+                  }}
+                >
+                  {/* A detected model may not be in the preset list; show it
+                      so the field never appears blank after auto-detect. */}
+                  {!GPU_OPTIONS.some((g) => g.model === formModel) && (
+                    <option value="">{formModel} (detected)</option>
+                  )}
+                  {GPU_OPTIONS.map((g) => (
+                    <option key={g.model} value={g.model}>
+                      {g.model}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field label="Region">
+              {(p) => (
+                <Select {...p} value={formRegion} onChange={(e) => setFormRegion(e.target.value)}>
+                  {REGIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field label="VRAM (GB)" hint="0 for CPU-only nodes.">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0}
+                  value={formVram}
+                  onChange={(e) => setFormVram(Number(e.target.value))}
+                />
+              )}
+            </Field>
+
+            <Field label="TFLOPS" hint="Peak throughput, used for ranking.">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0}
+                  value={formTflops}
+                  onChange={(e) => setFormTflops(Number(e.target.value))}
+                />
+              )}
+            </Field>
+          </div>
+
+          {hardware && (
+            <div className="rounded-lg border border-outline-variant bg-surface-container p-4">
+              <p className="mb-3 text-eyebrow uppercase text-on-surface-variant">
+                Detected hardware
+              </p>
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <DetectRow label="GPU" value={hardware.hasGpu ? hardware.gpuModel : 'CPU only'} />
+                <DetectRow label="CPU" value={`${hardware.cpuCores || '?'} threads`} />
+                <DetectRow
+                  label="RAM"
+                  value={hardware.ramGB ? `${hardware.ramGB} GB` : 'Unknown'}
+                />
+                <DetectRow
+                  label="Storage"
+                  value={hardware.storageGB > 0 ? `${hardware.storageGB} GB` : 'Unknown'}
+                />
+              </dl>
+              {hardware.rawGpuString && (
+                <p className="mt-3 border-t border-outline-variant pt-3 font-mono text-caption text-outline">
+                  {hardware.rawGpuString}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </Modal>
+    </PageShell>
+  );
+}
+
+/* ── Small pieces ─────────────────────────────────────── */
+
+function JobAction({
+  job,
+  tick,
+  txPending,
+  onAccept,
+  onComplete,
+}: {
+  job: JobRow;
+  tick: number;
+  txPending: boolean;
+  onAccept: () => void;
+  onComplete: () => void;
+}) {
+  if (job.status === JOB_PENDING) {
+    return (
+      <Button size="sm" variant="success" icon={Play} disabled={txPending} onClick={onAccept}>
+        Accept
+      </Button>
+    );
+  }
+
+  if (job.status === JOB_ACTIVE) {
+    // `tick` is the current unix second, supplied by the parent's interval.
+    // Reading Date.now() here instead made the render impure — the same props
+    // produced a different tree on every call.
+    const { secondsLeft: remaining, label: clock } = leaseCountdown(
+      job.startedAt,
+      Number(job.durationHours),
+      tick,
+    );
+    const urgency =
+      remaining < 300
+        ? 'text-compute-down'
+        : remaining < 900
+          ? 'text-compute-idle'
+          : 'text-on-surface-variant';
+
+    if (remaining === 0) {
+      return (
+        <Button
+          size="sm"
+          variant="primary"
+          icon={CheckCircle2}
+          disabled={txPending}
+          onClick={onComplete}
+        >
+          Settle
+        </Button>
+      );
+    }
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <span className={cn('font-mono text-caption font-semibold', urgency)}>{clock}</span>
+        <span className="text-caption text-outline">settles when the lease ends</span>
       </div>
     );
   }
 
+  return <span className="text-caption text-outline">—</span>;
+}
+
+function DetectRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex w-full flex-col gap-4 p-8 pb-12">
-      {/* Header */}
-      <div className="z-10 flex w-full flex-col items-start justify-between gap-4 lg:flex-row lg:items-end">
-        <div className="flex max-w-2xl flex-col gap-2">
-          <h1 className="text-base font-bold tracking-tight text-on-background">
-            My Nodes
-          </h1>
-          <p className="mt-1 text-xs text-on-surface-variant">
-            Register compute hardware on-chain, manage node status, and verify GPU clusters.
-          </p>
-        </div>
-        {address && (
-          <button
-            onClick={() => setShowRegister(!showRegister)}
-            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-3 font-mono text-sm font-semibold text-on-primary shadow-[0_0_20px_rgba(152,203,255,0.1)] transition-colors hover:bg-primary-fixed"
-          >
-            <PlusCircle className="h-5 w-5" />
-            Register New Node
-          </button>
-        )}
-      </div>
-
-      {/* Register Form */}
-      {showRegister && address && (
-        <div className="rounded-2xl bg-surface-container-low p-4 border border-primary/20">
-          <h3 className="mb-3 text-sm font-semibold text-on-surface">Register Compute Node</h3>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">GPU Model</label>
-              <select
-                value={formModel}
-                onChange={(e) => {
-                  const opt = GPU_OPTIONS.find(g => g.model === e.target.value)!;
-                  setFormModel(opt.model);
-                  setFormVram(opt.vram);
-                  setFormTflops(opt.tflops);
-                }}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary"
-              >
-                {GPU_OPTIONS.map(g => <option key={g.model} value={g.model}>{g.model}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">VRAM (GB)</label>
-              <input type="number" value={formVram} onChange={(e) => setFormVram(Number(e.target.value))}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary" />
-            </div>
-            <div>
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">TFLOPS</label>
-              <input type="number" value={formTflops} onChange={(e) => setFormTflops(Number(e.target.value))}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary" />
-            </div>
-            <div>
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">Region</label>
-              <select value={formRegion} onChange={(e) => setFormRegion(e.target.value)}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary">
-                {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-          </div>
-          {/* Auto-detect button */}
-          <div className="mb-4">
-            <button
-              onClick={handleAutoDetect}
-              disabled={detecting}
-              className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2.5 font-mono text-sm font-semibold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-            >
-              {detecting ? (
-                <><div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div> Detecting...</>
-              ) : (
-                <><Activity className="h-4 w-4" /> Auto-Detect Hardware</>
-              )}
-            </button>
-          </div>
-
-          {/* Duplicate warning */}
-          {dupError && (
-            <div className="mb-4 flex items-center gap-3 rounded-lg border border-compute-down/30 bg-compute-down/10 p-4">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-compute-down" />
-              <span className="text-sm text-on-surface">{dupError}</span>
-            </div>
-          )}
-
-          {/* Hardware info display */}
-          {hardware && (
-            <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-surface-container p-4 md:grid-cols-4">
-              <div>
-                <div className="font-mono text-[10px] uppercase text-outline">GPU</div>
-                <div className="text-sm text-on-surface">{hardware.hasGpu ? hardware.gpuModel : 'CPU Only'}</div>
-                {hardware.hasGpu && <div className="font-mono text-[10px] text-outline">{hardware.vramGB} GB VRAM</div>}
-              </div>
-              <div>
-                <div className="font-mono text-[10px] uppercase text-outline">CPU</div>
-                <div className="text-sm text-on-surface">{hardware.cpuCores || '?'} threads</div>
-                <div className="font-mono text-[10px] text-outline">{hardware.cpuModel}</div>
-              </div>
-              <div>
-                <div className="font-mono text-[10px] uppercase text-outline">RAM</div>
-                <div className="text-sm text-on-surface">{hardware.ramGB ? `${hardware.ramGB} GB` : 'N/A'}</div>
-              </div>
-              <div>
-                <div className="font-mono text-[10px] uppercase text-outline">STORAGE</div>
-                <div className="text-sm text-on-surface">{hardware.storageGB > 0 ? `${hardware.storageGB} GB` : 'N/A'}</div>
-              </div>
-              <div className="col-span-2 md:col-span-4">
-                <div className="font-mono text-[10px] uppercase text-outline">RAW GPU STRING</div>
-                <div className="font-mono text-xs text-on-surface-variant">{hardware.rawGpuString}</div>
-              </div>
-              <div className="col-span-2 md:col-span-4">
-                <div className="font-mono text-[10px] uppercase text-outline">HARDWARE FINGERPRINT</div>
-                <div className="font-mono text-xs text-primary">{hardware.fingerprint}</div>
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 flex gap-3">
-            <button
-              onClick={handleRegister}
-              disabled={txPending}
-              className="rounded-lg bg-primary px-6 py-2.5 font-mono text-sm font-semibold text-on-primary disabled:opacity-50"
-            >
-              {txPending ? 'Submitting...' : 'Register On-Chain'}
-            </button>
-            <button
-              onClick={() => setShowRegister(false)}
-              className="rounded-lg border border-outline-variant/20 px-6 py-2.5 font-mono text-sm text-on-surface-variant"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!address ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
-          <Cpu className="mb-4 h-12 w-12 text-outline" />
-          <h2 className="mb-2 text-sm font-semibold text-on-surface">Connect Wallet to Manage Nodes</h2>
-          <p className="text-sm text-on-surface-variant">Connect your wallet to register and manage compute nodes.</p>
-        </div>
-      ) : nodes.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
-          <PlusCircle className="mb-4 h-12 w-12 text-outline" />
-          <h2 className="mb-2 text-sm font-semibold text-on-surface">No Nodes Registered</h2>
-          <p className="text-sm text-on-surface-variant">Click "Register New Node" to add your first compute node on-chain.</p>
-        </div>
-      ) : (
-        <>
-          {/* Top Stats */}
-          <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-12">
-            <div className="flex flex-col gap-4 rounded-2xl bg-surface-container-low p-4 lg:col-span-8">
-              <div className="flex items-center justify-between">
-                <h2 className="flex items-center gap-3 text-base font-semibold text-on-surface">
-                  <Activity className="h-6 w-6 text-primary" />
-                  Fleet Overview
-                </h2>
-                <div className="flex items-center gap-4 font-mono text-sm text-on-surface-variant">
-                  <span className="flex items-center gap-1"><div className="h-2 w-2 rounded-full bg-compute-active"></div> Active</span>
-                  <span className="flex items-center gap-1"><div className="h-2 w-2 rounded-full bg-compute-idle"></div> Idle</span>
-                  <span className="flex items-center gap-1"><div className="h-2 w-2 rounded-full bg-compute-down"></div> Offline</span>
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-sm text-on-surface">{nodes.filter(n => n.status === 1).length}</div>
-                  <div className="font-mono text-[10px] uppercase text-outline">Active</div>
-                </div>
-                <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-sm text-on-surface">{nodes.filter(n => n.verified).length}</div>
-                  <div className="font-mono text-[10px] uppercase text-outline">Verified</div>
-                </div>
-                <div className="rounded-lg bg-surface-container p-4 text-center">
-                  <div className="font-mono text-sm text-on-surface">{formatBOTCompact(nodes.reduce((s, n) => s + n.totalRevenue, 0n))}</div>
-                  <div className="font-mono text-[10px] uppercase text-outline">Total Revenue (DGRAM)</div>
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-col gap-4 rounded-2xl bg-surface-container-low p-4 lg:col-span-4">
-              <h3 className="font-mono text-sm uppercase tracking-wider text-outline">Node Distribution</h3>
-              <div className="flex flex-1 items-center justify-center">
-                <div className="text-center">
-                  <span className="text-base font-bold text-on-surface">{nodes.length}</span>
-                  <span className="mt-1 block font-mono text-xs font-semibold text-outline">TOTAL NODES</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Node Table */}
-          <div className="overflow-hidden rounded-xl bg-surface-container-low shadow-sm">
-            <div className="grid grid-cols-12 gap-4 border-b border-outline-variant/10 bg-surface-container-lowest/50 p-4 font-mono text-xs font-semibold uppercase tracking-wider text-outline">
-              <div className="col-span-3">Node ID / Model</div>
-              <div className="col-span-2">Status</div>
-              <div className="col-span-2">Specs (VRAM)</div>
-              <div className="col-span-2">Region</div>
-              <div className="col-span-2 text-right">Revenue (DGRAM)</div>
-              <div className="col-span-1 text-right">Actions</div>
-            </div>
-
-            {nodes.map((node, idx) => (
-              <div key={idx} className={`group grid grid-cols-12 items-center gap-4 border-l-2 ${node.status === 1 ? 'border-compute-active' : node.status === 3 ? 'border-compute-down' : 'border-compute-idle'} border-t border-outline-variant/10 p-4 transition-colors hover:bg-surface-container-high/50`}>
-                <div className="col-span-3 flex items-center gap-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-container-highest">
-                    <Cpu className="h-5 w-5 text-on-surface-variant transition-colors group-hover:text-primary" />
-                  </div>
-                  <div>
-                    <div className="font-mono text-sm text-on-surface">NODE #{node.nodeId.toString()}</div>
-                    <div className="font-mono text-xs text-outline">{node.model}</div>
-                  </div>
-                </div>
-                <div className="col-span-2 flex items-center gap-2">
-                  <div className={`h-2 w-2 rounded-full ${STATUS_COLORS[node.status]} ${node.status === 1 ? 'animate-pulse shadow-[0_0_8px_#00FF41]' : ''}`}></div>
-                  <span className="text-sm text-on-surface">{STATUS_LABELS[node.status]}</span>
-                  {node.verified && <ShieldCheck className="h-3.5 w-3.5 text-compute-active" />}
-                </div>
-                <div className="col-span-2">
-                  <div className="font-mono text-sm text-on-surface">{node.vramGB} GB</div>
-                  <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS</div>
-                </div>
-                <div className="col-span-2 font-mono text-sm text-on-surface-variant">{node.region}</div>
-                <div className="col-span-2 text-right">
-                  <div className="font-mono text-sm text-primary">{formatBOT(node.totalRevenue)}</div>
-                  <div className="font-mono text-xs uppercase text-outline">Lifetime</div>
-                </div>
-                <div className="col-span-1 flex justify-end gap-1">
-                  {node.status !== 1 && (
-                    <button
-                      onClick={() => handleStatusChange(node.nodeId, 1)}
-                      disabled={txPending}
-                      title="Set Active"
-                      className="rounded bg-compute-active/20 px-2 py-1 font-mono text-[10px] font-semibold text-compute-active disabled:opacity-50"
-                    >ACT</button>
-                  )}
-                  {node.status === 1 && (
-                    <button
-                      onClick={() => handleStatusChange(node.nodeId, 0)}
-                      disabled={txPending}
-                      title="Set Inactive"
-                      className="rounded bg-surface px-2 py-1 font-mono text-[10px] font-semibold text-outline disabled:opacity-50"
-                    >IDLE</button>
-                  )}
-                  {!node.verified && (
-                    <button
-                      onClick={() => handleVerify(node.nodeId)}
-                      disabled={txPending}
-                      title="Verify Node"
-                      className="rounded bg-primary/20 px-2 py-1 font-mono text-[10px] font-semibold text-primary disabled:opacity-50"
-                    >VER</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Job Management Section */}
-          <div className="mt-8">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="flex items-center gap-3 text-base font-semibold text-on-surface">
-                <Briefcase className="h-6 w-6 text-primary" />
-                Job Queue
-              </h2>
-              <span className="font-mono text-xs text-outline">Jobs assigned to your nodes</span>
-            </div>
-
-            {jobsLoading ? (
-              <div className="flex items-center justify-center p-8">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
-              </div>
-            ) : jobs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl bg-surface-container-low p-8">
-                <Briefcase className="mb-3 h-8 w-8 text-outline" />
-                <p className="text-sm text-on-surface-variant">No jobs yet. When consumers lease your compute, they appear here.</p>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-xl bg-surface-container-low shadow-sm">
-                <div className="grid grid-cols-12 gap-4 border-b border-outline-variant/10 bg-surface-container-lowest/50 p-4 font-mono text-xs font-semibold uppercase tracking-wider text-outline">
-                  <div className="col-span-2">Job ID</div>
-                  <div className="col-span-2">Node</div>
-                  <div className="col-span-2">Type</div>
-                  <div className="col-span-1">Consumer</div>
-                  <div className="col-span-1 text-center">Duration</div>
-                  <div className="col-span-2 text-right">Payment</div>
-                  <div className="col-span-2 text-right">Actions</div>
-                </div>
-
-                {jobs.map((job, idx) => (
-                  <div key={idx} className="group grid grid-cols-12 items-center gap-4 border-t border-outline-variant/10 p-4 transition-colors hover:bg-surface-container-high/50">
-                    <div className="col-span-2">
-                      <div className="font-mono text-sm text-on-surface">JOB #{job.jobId.toString()}</div>
-                      <div className={`font-mono text-[10px] font-semibold uppercase ${JOB_COLORS[job.status]}`}>{JOB_LABELS[job.status]}</div>
-                    </div>
-                    <div className="col-span-2 font-mono text-xs text-on-surface-variant truncate">#{job.nodeId.toString()}</div>
-                    <div className="col-span-2 text-sm text-on-surface truncate">{job.jobType}</div>
-                    <div className="col-span-1 font-mono text-xs text-on-surface-variant">{formatAddress(job.consumer as any)}</div>
-                    <div className="col-span-1 text-center font-mono text-sm text-on-surface-variant">{job.durationHours.toString()}h</div>
-                    <div className="col-span-2 text-right">
-                      <div className="font-mono text-sm text-primary">{formatBOT(BigInt(job.pricePerHourWei) * BigInt(job.durationHours))}</div>
-                      <div className="font-mono text-[10px] uppercase text-outline">DGRAM total</div>
-                    </div>
-                    <div className="col-span-2 flex justify-end">
-                      {job.status === 0 && (
-                        <button
-                          onClick={() => handleAcceptJob(job.jobId)}
-                          disabled={txPending}
-                          title="Accept Job"
-                          className="flex items-center gap-1 rounded bg-compute-active/20 px-2 py-1.5 font-mono text-[10px] font-semibold text-compute-active disabled:opacity-50"
-                        >
-                          <Play className="h-3 w-3" /> ACCEPT
-                        </button>
-                      )}
-                      {job.status === 1 && (() => {
-                        // tick referenced to force re-render
-                        void tick;
-                        const elapsed = Math.floor(Date.now() / 1000) - job.startedAt;
-                        const total = Number(job.durationHours) * 3600;
-                        const remaining = Math.max(0, total - elapsed);
-                        const isExpired = remaining === 0;
-                        const hh = Math.floor(remaining / 3600);
-                        const mm = Math.floor((remaining % 3600) / 60);
-                        const ss = remaining % 60;
-                        const pad = (n: number) => n.toString().padStart(2, '0');
-                        const urgency = remaining < 300 ? 'text-compute-down' : remaining < 900 ? 'text-yellow-400' : 'text-on-surface-variant';
-                        return (
-                          <div className="flex flex-col items-end gap-1.5">
-                            {!isExpired ? (
-                              <>
-                                <div className={`flex items-center gap-1.5 rounded bg-surface px-2 py-1.5 ${urgency}`}>
-                                  <span className="font-mono text-[10px] font-bold tracking-wider">
-                                    {pad(hh)}:{pad(mm)}:{pad(ss)}
-                                  </span>
-                                </div>
-                                <button
-                                  onClick={() => handleCompleteJob(job.jobId)}
-                                  disabled={true}
-                                  title="Wait for lease duration to end"
-                                  className="flex items-center gap-1 rounded bg-surface-container-highest px-2 py-1 font-mono text-[9px] font-semibold text-outline cursor-not-allowed"
-                                >
-                                  <CheckCircle className="h-2.5 w-2.5" /> LOCKED
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => handleCompleteJob(job.jobId)}
-                                disabled={txPending}
-                                title="Complete Job"
-                                className="flex items-center gap-1 rounded bg-primary/20 px-2 py-1.5 font-mono text-[10px] font-semibold text-primary hover:bg-primary/30"
-                              >
-                                <CheckCircle className="h-3 w-3" /> DONE
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
-                      {(job.status === 2 || job.status === 3) && (
-                        <span className="font-mono text-[10px] text-outline">—</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-      )}
+    <div className="min-w-0">
+      <dt className="text-eyebrow uppercase text-outline">{label}</dt>
+      <dd className="mt-0.5 truncate text-caption text-on-surface" title={value}>
+        {value}
+      </dd>
     </div>
   );
+}
+
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th scope="col" className={cn('px-4 py-3 text-eyebrow uppercase text-outline', className)}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={cn('px-4 py-3 align-middle', className)}>{children}</td>;
 }

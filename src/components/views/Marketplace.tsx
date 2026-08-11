@@ -1,12 +1,34 @@
-import React, { useEffect, useState } from 'react';
-import { Star, Cpu, MapPin, Grid3x3, List, ShieldCheck, SlidersHorizontal, Gpu } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Sparkles,
+  Cpu,
+  MapPin,
+  LayoutGrid,
+  List,
+  ShieldCheck,
+  Server,
+  SlidersHorizontal,
+} from 'lucide-react';
+import { PageShell, PageHeader } from '@/components/layout/PageShell';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Badge, StatusDot } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { SkeletonCards } from '@/components/ui/Skeleton';
 import { useWalletContext } from '@/context/WalletContext';
+import { useToast } from '@/context/ToastContext';
 import { usePriceOracle } from '@/hooks/usePriceOracle';
 import { useComputeRegistry } from '@/hooks/useComputeRegistry';
-import { publicClient, CONTRACTS } from '@/config/chain';
 import { useComputeMarketplace } from '@/hooks/useComputeMarketplace';
-import { formatBOT, formatBOTCompact, formatAddress, timeAgo } from '@/lib/format';
-import { getPricingEngine } from '@/lib/pricing';
+import { formatBOT, formatAddress, formatNodeId } from '@/lib/format';
+import { GPU_MODELS, NODE_STATUS_ACTIVE, nodeStatus } from '@/lib/domain';
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+import { describeTxError } from '@/lib/tx';
+import { getPricingEngine, type PriceSuggestion } from '@/lib/pricing';
+import { cn } from '@/lib/utils';
 
 interface PriceInfo {
   model: string;
@@ -30,35 +52,27 @@ interface NodeListing {
   completedJobs: number;
 }
 
-const GPU_MODELS = ['NVIDIA H100', 'NVIDIA A100', 'NVIDIA RTX 4090', 'NVIDIA RTX 3090', 'NVIDIA RTX 3060', 'AMD Radeon GPU', 'CPU Only'];
-
 export function Marketplace() {
   const { address } = useWalletContext();
-  const { getPrice, isSupported } = usePriceOracle();
-  const { getNode, getNodeCount, getTotalActiveNodes } = useComputeRegistry();
-  const { createJob, getTotalJobs, getTotalVolume, getAllJobCounts, getCompletedJobStats } = useComputeMarketplace();
+  const toast = useToast();
+  const { getPrice } = usePriceOracle();
+  const { getNode, getAllNodeIds, getTotalActiveNodes } = useComputeRegistry();
+  const { createJob, getAllJobCounts, getCompletedJobStats } = useComputeMarketplace();
   const engine = getPricingEngine();
 
   const [loading, setLoading] = useState(true);
-  const [prices, setPrices] = useState<PriceInfo[]>([]);
   const [listings, setListings] = useState<NodeListing[]>([]);
-  const [totalJobs, setTotalJobs] = useState(0n);
-  const [totalVolume, setTotalVolume] = useState(0n);
-  const [activeNodes, setActiveNodes] = useState(0n);
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, any>>({});
-  const [jobCounts, setJobCounts] = useState<Map<string, number>>(new Map());
-  const [completedStats, setCompletedStats] = useState<{ perNode: Map<string, number>, perType: Map<string, number>, total: number }>({ perNode: new Map(), perType: new Map(), total: 0 });
-  const [leasing, setLeasing] = useState<number | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, PriceSuggestion>>({});
+  const [leasing, setLeasing] = useState(false);
 
   // View mode + filters
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filterModel, setFilterModel] = useState<string>('all');
   const [filterRegion, setFilterRegion] = useState<string>('all');
   const [filterVerified, setFilterVerified] = useState(false);
-  const [showFilters, setShowFilters] = useState(true);
 
   // Lease form
-  const [showLeaseForm, setShowLeaseForm] = useState<NodeListing | null>(null);
+  const [leaseTarget, setLeaseTarget] = useState<NodeListing | null>(null);
   const [leaseHours, setLeaseHours] = useState(1);
   const [leaseType, setLeaseType] = useState('Inference');
 
@@ -66,14 +80,7 @@ export function Marketplace() {
     async function loadData() {
       setLoading(true);
       try {
-        const [jobs, volume, active] = await Promise.all([
-          getTotalJobs(),
-          getTotalVolume(),
-          getTotalActiveNodes(),
-        ]);
-        setTotalJobs(jobs);
-        setTotalVolume(volume);
-        setActiveNodes(active);
+        const active = await getTotalActiveNodes();
 
         const priceInfos: PriceInfo[] = [];
         for (const model of GPU_MODELS) {
@@ -85,456 +92,581 @@ export function Marketplace() {
               confidence: p.confidence,
               updatedAt: Number(p.updatedAt),
             });
-          } catch {}
+          } catch {
+            // getPrice reverts for a benchmarked model the oracle has never been
+            // given a price for. That is a real state, not a failure — the node
+            // lists as unpriced and cannot be leased.
+          }
         }
-        setPrices(priceInfos);
 
-        // Fetch all NodeRegistered events to discover hash-based node IDs
-        const logs = await publicClient.getLogs({
-          address: CONTRACTS.ComputeRegistry,
-          event: {
-            type: 'event',
-            name: 'NodeRegistered',
-            inputs: [
-              { type: 'uint64', name: 'nodeId', indexed: true },
-              { type: 'address', name: 'provider', indexed: true },
-              { type: 'string', name: 'model', indexed: false },
-              { type: 'string', name: 'region', indexed: false },
-            ],
-          },
-          fromBlock: 0n,
-          toBlock: 'latest',
-        });
+        // Node ids are keccak-derived, so the registry cannot be walked by
+        // index — the hook recovers them from the registration log stream and
+        // reads every node concurrently through the multicall batcher.
+        const nodeIds = await getAllNodeIds();
+        const nodes = await Promise.all(nodeIds.map((id) => getNode(id).catch(() => null)));
 
         const nodeListings: NodeListing[] = [];
-        for (const log of logs) {
-          try {
-            const nodeId = (log.args as any).nodeId;
-            const node = await getNode(nodeId) as any;
-            if (node && node.provider !== '0x0000000000000000000000000000000000000000') {
-              const priceInfo = priceInfos.find(p => p.model === node.specs?.model);
-              nodeListings.push({
-                nodeId: nodeId,
-                provider: node.provider,
-                model: node.specs?.model || 'Unknown',
-                vramGB: Number(node.specs?.vramGB || 0),
-                tflops: Number(node.specs?.tflops || 0),
-                region: node.specs?.region || 'Unknown',
-                status: Number(node.status),
-                verified: node.verified,
-                pricePerHour: priceInfo?.pricePerHourWei || 0n,
-                confidence: priceInfo?.confidence || 0,
-                jobCount: 0,
-                completedJobs: 0,
-              });
-            }
-          } catch {}
-        }
+        nodes.forEach((node, index) => {
+          if (!node || node.provider === ZERO_ADDRESS) return;
+          const priceInfo = priceInfos.find((p) => p.model === node.specs.model);
+          nodeListings.push({
+            nodeId: nodeIds[index],
+            provider: node.provider,
+            model: node.specs.model,
+            vramGB: node.specs.vramGB,
+            tflops: node.specs.tflops,
+            region: node.specs.region,
+            status: node.status,
+            verified: node.verified,
+            pricePerHour: priceInfo?.pricePerHourWei ?? 0n,
+            confidence: priceInfo?.confidence ?? 0,
+            jobCount: 0,
+            completedJobs: 0,
+          });
+        });
         // Fetch job counts + completed job stats per node
-        const [jc, completed] = await Promise.all([
-          getAllJobCounts(),
-          getCompletedJobStats(),
-        ]);
-        setJobCounts(jc);
-        setCompletedStats(completed);
+        const [jc, completed] = await Promise.all([getAllJobCounts(), getCompletedJobStats()]);
         for (const n of nodeListings) {
           n.jobCount = jc.get(n.nodeId.toString()) ?? 0;
           n.completedJobs = completed.perNode.get(n.nodeId.toString()) ?? 0;
         }
+        // Available nodes first — a marketplace should lead with what can
+        // actually be leased, not with registration order.
+        nodeListings.sort((a, b) => {
+          if (a.status === NODE_STATUS_ACTIVE && b.status !== NODE_STATUS_ACTIVE) return -1;
+          if (a.status !== NODE_STATUS_ACTIVE && b.status === NODE_STATUS_ACTIVE) return 1;
+          return Number(a.pricePerHour - b.pricePerHour);
+        });
         setListings(nodeListings);
 
-        if (engine.isAvailable()) {
-          const suggestions: Record<string, any> = {};
-          for (const model of GPU_MODELS) {
-            try {
-              const s = await engine.suggestPrice(model, 80, 500, 0.5, Number(active));
-              suggestions[model] = s;
-            } catch {}
-          }
-          setAiSuggestions(suggestions);
-        }
+        // One call prices the whole catalog against its own reference specs.
+        // Asking per model let each answer pick its own scale, which is how an
+        // A100 ended up quoted below an RTX 3060.
+        setAiSuggestions(await engine.suggestCatalogPrices(0.5, Number(active)));
       } catch (err) {
         console.error('[Marketplace] Load failed:', err);
       } finally {
         setLoading(false);
       }
     }
-    loadData();
+    void loadData();
   }, []);
 
-  // Filtered listings
-  const filteredListings = listings.filter(n => {
-    if (filterModel !== 'all' && n.model !== filterModel) return false;
-    if (filterRegion !== 'all' && n.region !== filterRegion) return false;
-    if (filterVerified && !n.verified) return false;
-    return true;
-  });
+  const regions = useMemo(() => [...new Set(listings.map((n) => n.region))].sort(), [listings]);
 
-  const regions = [...new Set(listings.map(n => n.region))];
+  const filtered = useMemo(
+    () =>
+      listings.filter((n) => {
+        if (filterModel !== 'all' && n.model !== filterModel) return false;
+        if (filterRegion !== 'all' && n.region !== filterRegion) return false;
+        if (filterVerified && !n.verified) return false;
+        return true;
+      }),
+    [listings, filterModel, filterRegion, filterVerified],
+  );
 
-  async function handleLease(node: NodeListing) {
-    if (!address) return;
-    setLeasing(Number(node.nodeId));
+  const availableCount = useMemo(() => filtered.filter((n) => n.status === 1).length, [filtered]);
+  const filtersActive = filterModel !== 'all' || filterRegion !== 'all' || filterVerified;
+
+  function clearFilters() {
+    setFilterModel('all');
+    setFilterRegion('all');
+    setFilterVerified(false);
+  }
+
+  function openLease(node: NodeListing) {
+    if (!address) {
+      toast.error('Connect a wallet to lease compute', {
+        description: 'Leasing submits an on-chain transaction from your account.',
+      });
+      return;
+    }
+    setLeaseTarget(node);
+    setLeaseHours(1);
+  }
+
+  async function handleLease() {
+    if (!address || !leaseTarget) return;
+    setLeasing(true);
     try {
-      const value = node.pricePerHour * BigInt(leaseHours);
+      // The model is no longer passed: the contract prices the lease from the
+      // node's own registered specs, so it cannot be quoted against a cheaper card.
+      const value = leaseTarget.pricePerHour * BigInt(leaseHours);
       const hash = await createJob(
-        node.nodeId,
+        leaseTarget.nodeId,
         leaseType,
         '0x' + '00'.repeat(32),
         BigInt(leaseHours),
-        node.model,
-        value
+        value,
       );
-      if (hash) {
-        alert(`Job created! TX: ${hash}`);
-        setShowLeaseForm(null);
-      }
+      toast.success('Compute leased', {
+        description: `${leaseHours}h on ${leaseTarget.model}. Open Execute once the provider accepts.`,
+        txHash: hash,
+      });
+      setLeaseTarget(null);
     } catch (err) {
-      console.error('[Marketplace] Lease failed:', err);
-      alert('Lease failed. Check console.');
+      console.error('[Marketplace] lease failed:', err);
+      toast.error('Lease was not created', { description: describeTxError(err) });
     } finally {
-      setLeasing(null);
+      setLeasing(false);
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center pt-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+  return (
+    <PageShell>
+      <PageHeader
+        title="Explore compute"
+        description="Lease verified GPU capacity on BOT Chain. Hourly rates come from the on-chain price oracle."
+        actions={
+          !loading && (
+            <span className="flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container px-3 py-2">
+              <StatusDot
+                tone={availableCount > 0 ? 'success' : 'neutral'}
+                live={availableCount > 0}
+              />
+              <span className="text-label text-on-surface-variant">
+                <span className="font-mono text-on-surface">{availableCount}</span> of{' '}
+                <span className="font-mono">{filtered.length}</span> available now
+              </span>
+            </span>
+          )
+        }
+      />
+
+      {/* ── Filters ── */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <SlidersHorizontal className="h-4 w-4 shrink-0 text-outline" aria-hidden />
+
+        <Select
+          aria-label="Filter by GPU model"
+          value={filterModel}
+          onChange={(e) => setFilterModel(e.target.value)}
+          className="h-9 w-auto min-w-[9.5rem] text-label"
+        >
+          <option value="all">All GPUs</option>
+          {GPU_MODELS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
+
+        <Select
+          aria-label="Filter by region"
+          value={filterRegion}
+          onChange={(e) => setFilterRegion(e.target.value)}
+          className="h-9 w-auto min-w-[9.5rem] text-label"
+        >
+          <option value="all">All regions</option>
+          {regions.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </Select>
+
+        <Button
+          size="sm"
+          variant={filterVerified ? 'success' : 'secondary'}
+          icon={ShieldCheck}
+          aria-pressed={filterVerified}
+          onClick={() => setFilterVerified((v) => !v)}
+          className="h-9"
+        >
+          Verified only
+        </Button>
+
+        {filtersActive && (
+          <Button size="sm" variant="ghost" onClick={clearFilters} className="h-9">
+            Clear filters
+          </Button>
+        )}
+
+        {/* Segmented view switch */}
+        <div
+          role="group"
+          aria-label="Layout"
+          className="ml-auto flex rounded-lg border border-outline-variant bg-surface-container p-0.5"
+        >
+          {(
+            [
+              ['grid', LayoutGrid, 'Grid'],
+              ['list', List, 'List'],
+            ] as const
+          ).map(([mode, Icon, label]) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              aria-pressed={viewMode === mode}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-caption font-medium transition-colors',
+                viewMode === mode
+                  ? 'bg-surface-container-highest text-on-surface'
+                  : 'text-on-surface-variant hover:text-on-surface',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-    );
-  }
+
+      {/* ── Listings ── */}
+      {loading ? (
+        <SkeletonCards count={6} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title={
+            listings.length === 0
+              ? 'No compute nodes registered yet'
+              : 'No nodes match these filters'
+          }
+          description={
+            listings.length === 0
+              ? 'Nodes appear here as soon as providers register hardware on-chain.'
+              : 'Widen the filters to see more of the network.'
+          }
+          action={
+            filtersActive ? (
+              <Button variant="secondary" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((node) => (
+            <NodeCard key={node.nodeId.toString()} node={node} onLease={() => openLease(node)} />
+          ))}
+        </div>
+      ) : (
+        <NodeTable listings={filtered} onLease={openLease} />
+      )}
+
+      {/* ── AI pricing ── */}
+      {Object.keys(aiSuggestions).length > 0 && (
+        <Card className="mt-6 p-5">
+          <div className="mb-4 flex items-start gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+              <Sparkles className="h-4 w-4" aria-hidden />
+            </span>
+            <div>
+              <h2 className="text-subtitle text-on-surface">Suggested rates</h2>
+              <p className="mt-0.5 text-caption text-on-surface-variant">
+                {aiSuggestions[GPU_MODELS[0]]?.reasoning ||
+                  'The pricing engine weighs GPU supply, demand and benchmarks, then publishes rates to the on-chain oracle.'}
+              </p>
+            </div>
+          </div>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+            {Object.entries(aiSuggestions).map(([model, s]) => (
+              <div
+                key={model}
+                className="flex items-baseline justify-between gap-2 border-b border-outline-variant py-1.5"
+              >
+                <dt className="truncate text-caption text-on-surface-variant">
+                  {model.replace('NVIDIA ', '')}
+                </dt>
+                <dd className="font-mono text-caption text-primary">{formatBOT(s.pricePerHour)}</dd>
+              </div>
+            ))}
+          </dl>
+        </Card>
+      )}
+
+      {/* ── Lease dialog ── */}
+      <Modal
+        open={leaseTarget !== null}
+        onClose={() => setLeaseTarget(null)}
+        icon={Cpu}
+        title="Lease compute"
+        description={
+          leaseTarget ? `${leaseTarget.model} · ${formatNodeId(leaseTarget.nodeId)}` : undefined
+        }
+        footer={
+          <>
+            <Button
+              variant="primary"
+              fullWidth
+              loading={leasing}
+              onClick={() => void handleLease()}
+            >
+              {leasing ? 'Confirming' : 'Confirm lease'}
+            </Button>
+            <Button variant="ghost" onClick={() => setLeaseTarget(null)}>
+              Cancel
+            </Button>
+          </>
+        }
+      >
+        {leaseTarget && (
+          <div className="flex flex-col gap-4">
+            <Field label="Workload type">
+              {(p) => (
+                <Select {...p} value={leaseType} onChange={(e) => setLeaseType(e.target.value)}>
+                  <option value="Inference">Inference</option>
+                  {/* Disabled pending implementation */}
+                  <option value="LLM Training" disabled>
+                    LLM training — coming soon
+                  </option>
+                  <option value="Fine-tuning" disabled>
+                    Fine-tuning — coming soon
+                  </option>
+                  <option value="Image Generation" disabled>
+                    Image generation — coming soon
+                  </option>
+                  <option value="Data Processing" disabled>
+                    Data processing — coming soon
+                  </option>
+                </Select>
+              )}
+            </Field>
+
+            <Field label="Duration" hint="Billed up front for the full duration.">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={1}
+                  value={leaseHours}
+                  onChange={(e) => setLeaseHours(Math.max(1, Number(e.target.value) || 1))}
+                />
+              )}
+            </Field>
+
+            <div className="rounded-lg border border-outline-variant bg-surface-container p-3.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-label text-on-surface-variant">Total</span>
+                <span className="font-mono text-title text-primary">
+                  {formatBOT(leaseTarget.pricePerHour * BigInt(leaseHours))}
+                  <span className="ml-1.5 text-caption font-normal text-on-surface-variant">
+                    DGRAM
+                  </span>
+                </span>
+              </div>
+              <p className="mt-1 text-right font-mono text-caption text-outline">
+                {formatBOT(leaseTarget.pricePerHour)} × {leaseHours}h
+              </p>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </PageShell>
+  );
+}
+
+/* ── Grid card ────────────────────────────────────────────
+   Ranked, not flat: the machine and its price decide the lease, so
+   they lead. Node id, provider and throughput are supporting detail.  */
+function NodeCard({ node, onLease }: { node: NodeListing; onLease: () => void }) {
+  const status = nodeStatus(node.status);
+  // A node with no oracle price cannot be leased: createJob reverts inside the
+  // price lookup. Showing it at "0.00/hr" with a live Lease button sent people
+  // straight into that revert.
+  const priced = node.pricePerHour > 0n;
+  const available = node.status === NODE_STATUS_ACTIVE && priced;
 
   return (
-    <div className="flex h-full w-full flex-col relative z-10">
-      {/* Ticker */}
-      <div className="sticky top-0 z-30 flex h-12 items-center overflow-hidden border-b border-surface-glass bg-surface/50 px-8 backdrop-blur-xl">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-compute-active"></div>
-            <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-outline">Total Jobs</span>
-            <span className="font-mono text-sm text-primary">{totalJobs.toString()}</span>
-          </div>
-          <div className="h-4 w-px bg-outline-variant/30"></div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-outline">Network Volume</span>
-            <span className="font-mono text-sm text-on-surface">{formatBOTCompact(totalVolume)} DGRAM</span>
-          </div>
-          <div className="h-4 w-px bg-outline-variant/30"></div>
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-outline">Active Nodes</span>
-            <span className="font-mono text-sm text-secondary-fixed">{activeNodes.toString()}</span>
-          </div>
+    <Card className="flex flex-col p-5 transition-colors hover:border-outline/60">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-subtitle text-on-surface">{node.model}</h3>
+          <p className="mt-1 flex items-center gap-1.5 text-caption text-on-surface-variant">
+            <MapPin className="h-3 w-3 shrink-0" aria-hidden />
+            {node.region}
+            {node.verified && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="flex items-center gap-1 text-compute-active">
+                  <ShieldCheck className="h-3 w-3" aria-hidden /> Verified
+                </span>
+              </>
+            )}
+          </p>
         </div>
+        <Badge tone={status.tone}>
+          <StatusDot tone={status.tone} live={available} className="mr-0.5" />
+          {status.label}
+        </Badge>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto bg-gradient-to-b from-surface/50 to-surface p-8 pb-32">
-        {/* Header */}
-        <div className="mb-6">
-          <h2 className="text-base font-semibold text-on-surface">Explore Compute</h2>
-          <p className="mt-1 text-sm text-on-surface-variant">Lease verified GPU compute on BOT Chain. Prices set by AI oracle.</p>
-        </div>
+      <dl className="mt-4 grid grid-cols-3 gap-3 border-y border-outline-variant py-3">
+        <Spec
+          label={node.vramGB > 0 ? 'VRAM' : 'Type'}
+          value={node.vramGB > 0 ? `${node.vramGB} GB` : 'CPU'}
+        />
+        <Spec label="TFLOPS" value={node.tflops.toString()} />
+        <Spec label="Jobs done" value={`${node.completedJobs}/${node.jobCount}`} />
+      </dl>
 
-        {/* Filters Bar (inline, above listings) */}
-        <div className="mb-6 rounded-xl bg-surface-container-low p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Filter toggle */}
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-container px-3 py-2 font-mono text-xs font-semibold text-on-surface-variant transition-colors hover:text-on-surface"
-            >
-              <SlidersHorizontal className="h-4 w-4" /> Filters
-            </button>
+      <p className="mt-3 flex items-center justify-between text-caption text-outline">
+        <span className="font-mono" title={node.nodeId.toString()}>
+          {formatNodeId(node.nodeId)}
+        </span>
+        <span className="font-mono" title={node.provider}>
+          {formatAddress(node.provider)}
+        </span>
+      </p>
 
-            {/* GPU Model filter */}
-            <select
-              value={filterModel}
-              onChange={e => setFilterModel(e.target.value)}
-              className="rounded-lg border border-outline-variant/20 bg-surface-container px-3 py-2 font-mono text-xs text-on-surface outline-none focus:border-primary"
-            >
-              <option value="all">All GPUs</option>
-              {GPU_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-
-            {/* Region filter */}
-            <select
-              value={filterRegion}
-              onChange={e => setFilterRegion(e.target.value)}
-              className="rounded-lg border border-outline-variant/20 bg-surface-container px-3 py-2 font-mono text-xs text-on-surface outline-none focus:border-primary"
-            >
-              <option value="all">All Regions</option>
-              {regions.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-
-            {/* Verified only */}
-            <button
-              onClick={() => setFilterVerified(!filterVerified)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-xs font-semibold transition-colors ${filterVerified ? 'border-compute-active/40 bg-compute-active/10 text-compute-active' : 'border-outline-variant/20 bg-surface-container text-on-surface-variant'}`}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" /> Verified Only
-            </button>
-
-            {/* Grid / List toggle — right aligned */}
-            <div className="ml-auto flex items-center gap-2">
-              <div className="flex rounded-lg border border-outline-variant/20 bg-surface-container p-1">
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'grid' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-                >
-                  <Grid3x3 className="h-4 w-4" /> Grid
-                </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-mono text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-                >
-                  <List className="h-4 w-4" /> List
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Expandable filter content: AI pricing only */}
-          {showFilters && (
-            <div className="mt-4 border-t border-outline-variant/10 pt-4">
-              {engine.isAvailable() && Object.keys(aiSuggestions).length > 0 && (
-                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-                  <h3 className="mb-3 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-primary">
-                    <Star className="h-3.5 w-3.5" /> AI Pricing Engine
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {Object.entries(aiSuggestions).map(([model, s]: [string, any]) => (
-                      <div key={model} className="flex justify-between text-xs">
-                        <span className="text-on-surface-variant">{model.replace('NVIDIA ', '')}</span>
-                        <span className="font-mono text-primary">{formatBOT(s.pricePerHour)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-[10px] text-outline">{aiSuggestions[GPU_MODELS[0]]?.reasoning || 'AI-powered pricing'}</p>
-                </div>
-              )}
-            </div>
+      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
+        <p>
+          {priced ? (
+            <>
+              <span className="font-mono text-title text-primary">
+                {formatBOT(node.pricePerHour)}
+              </span>
+              <span className="ml-1.5 text-caption text-on-surface-variant">DGRAM / hr</span>
+            </>
+          ) : (
+            <span className="text-label text-on-surface-variant">Not priced by the oracle</span>
           )}
-        </div>
-
-        {/* Listings */}
-        {filteredListings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl bg-surface-container-low p-16">
-            <Cpu className="mb-4 h-12 w-12 text-outline" />
-            <h2 className="mb-2 text-sm font-semibold text-on-surface">No Compute Nodes Found</h2>
-            <p className="text-sm text-on-surface-variant">
-              {listings.length === 0
-                ? 'Nodes will appear here once providers register them. Go to Node Management to register.'
-                : 'No nodes match your current filters. Try adjusting them.'}
-            </p>
-          </div>
-        ) : viewMode === 'grid' ? (
-          /* GRID VIEW */
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filteredListings.map((node, idx) => (
-              <div key={idx} className="group rounded-lg border border-surface-glass bg-surface-container-low p-5 transition-all hover:-translate-y-1 hover:border-outline-variant/50 hover:shadow-lg">
-                <div className="mb-3 flex items-start justify-between">
-                  <div className="font-mono text-sm text-on-surface">{node.model}</div>
-                  <div className="flex items-center gap-1">
-                    {node.verified && <ShieldCheck className="h-3.5 w-3.5 text-compute-active" />}
-                    <div className="flex items-center gap-1 rounded bg-surface-container-high px-2 py-0.5 font-mono text-[10px] font-semibold text-outline">
-                      <MapPin className="h-3 w-3" /> {node.region}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mb-4 flex flex-col gap-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">NODE ID</span>
-                    <span className="font-mono text-xs text-on-surface-variant">#{node.nodeId.toString()}</span>
-                  </div>
-                  {node.vramGB > 0 ? (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-mono text-[10px] font-semibold text-outline-variant">VRAM</span>
-                      <span className="font-mono text-sm text-on-surface">{node.vramGB} GB</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-mono text-[10px] font-semibold text-outline-variant">TYPE</span>
-                      <span className="font-mono text-xs text-secondary-fixed">CPU Only</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">TFLOPS</span>
-                    <span className="font-mono text-sm text-on-surface">{node.tflops}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">JOBS TOTAL</span>
-                    <span className="font-mono text-sm text-on-surface">{node.jobCount}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">COMPLETED</span>
-                    <span className="font-mono text-sm text-compute-active">{node.completedJobs}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">PROVIDER</span>
-                    <span className="font-mono text-xs text-on-surface-variant">{formatAddress(node.provider as any)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[10px] font-semibold text-outline-variant">STATUS</span>
-                    <span className={`font-mono text-xs ${node.status === 1 ? 'text-compute-active' : 'text-outline'}`}>
-                      {node.status === 1 ? 'Active' : node.status === 3 ? 'Offline' : 'Inactive'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between border-t border-surface-glass pt-4">
-                  <div>
-                    <div className="font-mono text-xs leading-none text-primary">{formatBOT(node.pricePerHour)}</div>
-                    <div className="font-mono text-[10px] font-semibold text-outline">DGRAM/hr</div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (!address) { alert('Connect wallet first'); return; }
-                      if (node.status !== 1) { alert('Node not active'); return; }
-                      setShowLeaseForm(node);
-                      setLeaseHours(1);
-                    }}
-                    disabled={node.status !== 1}
-                    className="rounded border border-surface-glass bg-surface-container-high px-4 py-1.5 font-mono text-xs font-semibold text-on-surface transition-colors hover:border-primary/50 hover:bg-primary/20 hover:text-primary disabled:opacity-30"
-                  >
-                    LEASE
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          /* LIST VIEW */
-          <div className="overflow-hidden rounded-xl bg-surface-container-low shadow-sm">
-            <div className="grid grid-cols-12 gap-4 border-b border-outline-variant/10 bg-surface-container-lowest/50 p-4 font-mono text-xs font-semibold uppercase tracking-wider text-outline">
-              <div className="col-span-3">GPU Model / Node</div>
-              <div className="col-span-2">Specs</div>
-              <div className="col-span-2">Region</div>
-              <div className="col-span-2">Provider</div>
-              <div className="col-span-1 text-right">Price</div>
-              <div className="col-span-1 text-right">Status</div>
-              <div className="col-span-1 text-right">Action</div>
-            </div>
-            {filteredListings.map((node, idx) => (
-              <div key={idx} className={`group grid grid-cols-12 items-center gap-4 border-l-2 ${node.status === 1 ? 'border-compute-active' : 'border-compute-idle'} border-t border-outline-variant/10 p-4 transition-colors hover:bg-surface-container-high/50`}>
-                <div className="col-span-3 flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container-highest">
-                    <Cpu className="h-4 w-4 text-on-surface-variant group-hover:text-primary" />
-                  </div>
-                  <div>
-                    <div className="text-sm text-on-surface">{node.model}</div>
-                    <div className="font-mono text-xs text-outline">#{node.nodeId.toString()}</div>
-                  </div>
-                </div>
-                <div className="col-span-2">
-                  {node.vramGB > 0 ? (
-                    <>
-                      <div className="font-mono text-xs text-on-surface">{node.vramGB} GB VRAM</div>
-                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.completedJobs}/{node.jobCount} done</div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="font-mono text-xs text-secondary-fixed">CPU Only</div>
-                      <div className="font-mono text-xs text-outline">{node.tflops} TFLOPS · {node.completedJobs}/{node.jobCount} done</div>
-                    </>
-                  )}
-                </div>
-                <div className="col-span-2 flex items-center gap-1 font-mono text-xs text-on-surface-variant">
-                  <MapPin className="h-3 w-3" /> {node.region}
-                </div>
-                <div className="col-span-2 font-mono text-xs text-on-surface-variant">
-                  <div className="flex items-center gap-1">
-                    {node.verified && <ShieldCheck className="h-3 w-3 text-compute-active" />}
-                    {formatAddress(node.provider as any)}
-                  </div>
-                </div>
-                <div className="col-span-1 text-right">
-                  <div className="font-mono text-sm text-primary">{formatBOT(node.pricePerHour)}</div>
-                  <div className="font-mono text-[10px] text-outline">DGRAM/hr</div>
-                </div>
-                <div className="col-span-1 text-right">
-                  <span className={`font-mono text-xs ${node.status === 1 ? 'text-compute-active' : 'text-outline'}`}>
-                    {node.status === 1 ? '● Active' : node.status === 3 ? '● Offline' : '● Idle'}
-                  </span>
-                </div>
-                <div className="col-span-1 flex justify-end">
-                  <button
-                    onClick={() => {
-                      if (!address) { alert('Connect wallet first'); return; }
-                      if (node.status !== 1) { alert('Node not active'); return; }
-                      setShowLeaseForm(node);
-                      setLeaseHours(1);
-                    }}
-                    disabled={node.status !== 1}
-                    className="rounded border border-surface-glass bg-surface-container-high px-3 py-1.5 font-mono text-[10px] font-semibold text-on-surface transition-colors hover:border-primary/50 hover:bg-primary/20 hover:text-primary disabled:opacity-30"
-                  >
-                    LEASE
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* AI Pricing Engine Card */}
-        {engine.isAvailable() && (
-          <div className="mt-8 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4">
-            <div className="mb-4 flex items-center gap-3">
-              <Star className="h-5 w-5 text-primary" />
-              <h3 className="text-sm font-semibold text-on-surface">AI Pricing Engine Active</h3>
-            </div>
-            <p className="text-sm text-on-surface-variant">
-              Gemini-powered pricing engine is monitoring GPU supply, demand, and benchmarks to push fair prices to the on-chain oracle.
-            </p>
-          </div>
-        )}
+        </p>
+        <Button
+          variant={available ? 'primary' : 'secondary'}
+          onClick={onLease}
+          disabled={!available}
+        >
+          {available ? 'Lease' : priced ? 'Unavailable' : 'Unpriced'}
+        </Button>
       </div>
+    </Card>
+  );
+}
 
-      {/* Lease Modal */}
-      {showLeaseForm && address && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowLeaseForm(null)}>
-          <div className="w-full max-w-md rounded-2xl bg-surface-container-low p-4" onClick={e => e.stopPropagation()}>
-            <h3 className="mb-3 text-sm font-semibold text-on-surface">Lease Compute</h3>
-            <div className="mb-4">
-              <div className="mb-2 text-sm text-on-surface-variant">{showLeaseForm.model} · Node #{showLeaseForm.nodeId.toString()}</div>
-              <div className="mb-3 font-mono text-sm text-primary">{formatBOT(showLeaseForm.pricePerHour)} DGRAM/hr</div>
-            </div>
-            <div className="mb-4">
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">Job Type</label>
-              <select value={leaseType} onChange={e => setLeaseType(e.target.value)}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary">
-                <option>Inference</option>
-                <option>LLM Training</option>
-                <option>Fine-tuning</option>
-                <option>Image Generation</option>
-                <option>Data Processing</option>
-              </select>
-            </div>
-            <div className="mb-4">
-              <label className="mb-2 block font-mono text-xs font-semibold uppercase text-outline">Duration (hours)</label>
-              <input type="number" min={1} value={leaseHours} onChange={e => setLeaseHours(Number(e.target.value))}
-                className="w-full rounded-lg border border-outline-variant/20 bg-surface-container px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary" />
-            </div>
-            <div className="mb-4 rounded-lg bg-surface-container p-4">
-              <div className="flex justify-between text-sm">
-                <span className="text-on-surface-variant">Total Cost</span>
-                <span className="font-mono text-sm text-primary">{formatBOT(showLeaseForm.pricePerHour * BigInt(leaseHours))} DGRAM</span>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleLease(showLeaseForm)}
-                disabled={leasing !== null}
-                className="flex-1 rounded-lg bg-primary px-6 py-3 font-mono text-sm font-semibold text-on-primary disabled:opacity-50"
-              >
-                {leasing !== null ? 'Submitting...' : 'Confirm Lease'}
-              </button>
-              <button onClick={() => setShowLeaseForm(null)} className="rounded-lg border border-outline-variant/20 px-6 py-3 font-mono text-sm text-on-surface-variant">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+function Spec({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-eyebrow uppercase text-outline">{label}</dt>
+      <dd className="mt-0.5 truncate font-mono text-label text-on-surface">{value}</dd>
     </div>
   );
+}
+
+/* ── List view ─────────────────────────────────────────── */
+function NodeTable({
+  listings,
+  onLease,
+}: {
+  listings: NodeListing[];
+  onLease: (n: NodeListing) => void;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[54rem] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-outline-variant bg-surface-container/50">
+              <Th>GPU</Th>
+              <Th>Specs</Th>
+              <Th>Region</Th>
+              <Th>Provider</Th>
+              <Th className="text-right">Rate / hr</Th>
+              <Th>Status</Th>
+              <Th className="text-right">Action</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {listings.map((node) => {
+              const status = nodeStatus(node.status);
+              const priced = node.pricePerHour > 0n;
+              const available = node.status === NODE_STATUS_ACTIVE && priced;
+              return (
+                <tr
+                  key={node.nodeId.toString()}
+                  className="border-b border-outline-variant last:border-0 transition-colors hover:bg-surface-container/40"
+                >
+                  <Td>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-container text-on-surface-variant">
+                        <Cpu className="h-4 w-4" aria-hidden />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-label text-on-surface">{node.model}</p>
+                        <p
+                          className="font-mono text-caption text-outline"
+                          title={node.nodeId.toString()}
+                        >
+                          {formatNodeId(node.nodeId)}
+                        </p>
+                      </div>
+                    </div>
+                  </Td>
+                  <Td>
+                    <p className="font-mono text-caption text-on-surface">
+                      {node.vramGB > 0 ? `${node.vramGB} GB VRAM` : 'CPU only'}
+                    </p>
+                    <p className="font-mono text-caption text-outline">
+                      {node.tflops} TFLOPS · {node.completedJobs}/{node.jobCount} done
+                    </p>
+                  </Td>
+                  <Td>
+                    <span className="flex items-center gap-1.5 text-caption text-on-surface-variant">
+                      <MapPin className="h-3 w-3 shrink-0" aria-hidden /> {node.region}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span
+                      className="flex items-center gap-1.5 font-mono text-caption text-on-surface-variant"
+                      title={node.provider}
+                    >
+                      {node.verified && (
+                        <ShieldCheck
+                          className="h-3 w-3 shrink-0 text-compute-active"
+                          aria-label="Verified"
+                        />
+                      )}
+                      {formatAddress(node.provider)}
+                    </span>
+                  </Td>
+                  <Td className="text-right">
+                    {priced ? (
+                      <>
+                        <span className="font-mono text-label text-primary">
+                          {formatBOT(node.pricePerHour)}
+                        </span>
+                        <span className="ml-1 text-caption text-outline">DGRAM</span>
+                      </>
+                    ) : (
+                      <span className="text-caption text-outline">Unpriced</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <Badge tone={status.tone}>
+                      <StatusDot tone={status.tone} live={available} className="mr-0.5" />
+                      {status.label}
+                    </Badge>
+                  </Td>
+                  <Td className="text-right">
+                    <Button
+                      size="sm"
+                      variant={available ? 'primary' : 'secondary'}
+                      onClick={() => onLease(node)}
+                      disabled={!available}
+                    >
+                      {available ? 'Lease' : priced ? '—' : 'Unpriced'}
+                    </Button>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th scope="col" className={cn('px-4 py-3 text-eyebrow uppercase text-outline', className)}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={cn('px-4 py-3 align-middle', className)}>{children}</td>;
 }

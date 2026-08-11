@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-import { type Address, type Chain } from 'viem';
-import { activeChain, publicClient, getWalletClient } from '@/config/chain';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Address } from 'viem';
 
-// ── Types ────────────────────────────────────────────────
+import { activeChain, publicClient } from '@/config/chain';
+
 export interface WalletState {
   address: Address | null;
   chainId: number | null;
@@ -11,147 +11,173 @@ export interface WalletState {
   balance: bigint;
 }
 
-// ── Hook ─────────────────────────────────────────────────
+const INITIAL: WalletState = {
+  address: null,
+  chainId: null,
+  isConnecting: false,
+  isWrongChain: false,
+  balance: 0n,
+};
+
+/** The top-bar balance goes stale otherwise; roughly one block on this chain. */
+const BALANCE_POLL_MS = 15_000;
+
+function getProvider() {
+  return typeof window === 'undefined' ? undefined : window.ethereum;
+}
+
 export function useWallet() {
-  const [state, setState] = useState<WalletState>({
-    address: null,
-    chainId: null,
-    isConnecting: false,
-    isWrongChain: false,
-    balance: 0n,
-  });
+  const [state, setState] = useState<WalletState>(INITIAL);
+  const hasEthereum = getProvider() !== undefined;
 
-  // ── Check if window.ethereum exists ─────────────────────
-  const hasEthereum = typeof window !== 'undefined' && (window as any).ethereum;
+  const readChainId = useCallback(async (): Promise<number | null> => {
+    const eth = getProvider();
+    if (!eth) return null;
+    const hex = (await eth.request({ method: 'eth_chainId' })) as string;
+    return Number.parseInt(hex, 16);
+  }, []);
 
-  // ── Connect wallet ──────────────────────────────────────
-  const connect = useCallback(async () => {
-    if (!hasEthereum) {
-      alert('MetaMask tidak terdeteksi. Install MetaMask atau gunakan wallet yang mendukung window.ethereum.');
-      return;
+  const readBalance = useCallback(async (address: Address): Promise<bigint> => {
+    try {
+      return await publicClient.getBalance({ address });
+    } catch (err) {
+      console.error('[useWallet] balance read failed:', err);
+      return 0n;
     }
+  }, []);
+
+  const connect = useCallback(async () => {
+    // WalletConnect already disables the button and explains why when no
+    // provider is injected, so this is a guard, not a place to interrupt.
+    const eth = getProvider();
+    if (!eth) return;
 
     setState((s) => ({ ...s, isConnecting: true }));
     try {
-      const eth = (window as any).ethereum;
-      const accounts: string[] = await eth.request({ method: 'eth_requestAccounts' });
-      const chainId: string = await eth.request({ method: 'eth_chainId' });
-      const parsedChainId = parseInt(chainId, 16);
+      const accounts = (await eth.request({ method: 'eth_requestAccounts' })) as string[];
+      const address = accounts[0] as Address | undefined;
+      if (!address) {
+        setState({ ...INITIAL });
+        return;
+      }
 
-      const address = accounts[0] as Address;
-      const isWrongChain = parsedChainId !== activeChain.id;
-
-      // Try switching to BOT Chain
-      if (isWrongChain) {
+      if ((await readChainId()) !== activeChain.id) {
         try {
           await eth.request({
             method: 'wallet_switchEthereumChain',
             params: [{ chainId: `0x${activeChain.id.toString(16)}` }],
           });
-        } catch (switchError: any) {
-          // Chain not added yet — add it
-          if (switchError.code === 4902) {
+        } catch (switchError) {
+          const code = (switchError as { code?: number }).code;
+          if (code === 4902) {
             await eth.request({
               method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: `0x${activeChain.id.toString(16)}`,
-                chainName: activeChain.name,
-                nativeCurrency: activeChain.nativeCurrency,
-                rpcUrls: [activeChain.rpcUrls.default.http[0]],
-                blockExplorerUrls: [activeChain.blockExplorers?.default.url || ''],
-              }],
+              params: [
+                {
+                  chainId: `0x${activeChain.id.toString(16)}`,
+                  chainName: activeChain.name,
+                  nativeCurrency: activeChain.nativeCurrency,
+                  rpcUrls: [activeChain.rpcUrls.default.http[0]],
+                  blockExplorerUrls: [activeChain.blockExplorers.default.url],
+                },
+              ],
             });
           }
+          // A declined switch (4001) is not an error to swallow: the wallet is
+          // still on another chain, and the state below has to say so.
         }
       }
 
-      // Get balance
-      let balance = 0n;
-      try {
-        balance = await publicClient.getBalance({ address });
-        console.log('[useWallet] Balance fetched:', balance.toString(), 'for', address);
-      } catch (e) {
-        console.error('[useWallet] Balance fetch failed:', e);
-        // Fallback: use raw RPC
-        try {
-          const hex = await eth.request({ method: 'eth_getBalance', params: [address, 'latest'] });
-          balance = BigInt(hex);
-          console.log('[useWallet] Fallback balance:', balance.toString());
-        } catch (e2) {
-          console.error('[useWallet] Fallback also failed:', e2);
-        }
-      }
-
+      // Read the chain back rather than assuming the switch succeeded. Assuming
+      // it left `isWrongChain` permanently false, so a user who declined saw a
+      // green "Connected" pill and a chain id the app had invented.
+      const chainId = await readChainId();
       setState({
         address,
-        chainId: activeChain.id,
+        chainId,
         isConnecting: false,
-        isWrongChain: false,
-        balance,
+        isWrongChain: chainId !== activeChain.id,
+        balance: await readBalance(address),
       });
     } catch (err) {
-      console.error('Wallet connect failed:', err);
+      console.error('[useWallet] connect failed:', err);
       setState((s) => ({ ...s, isConnecting: false }));
     }
-  }, [hasEthereum]);
+  }, [readChainId, readBalance]);
 
-  // ── Disconnect ──────────────────────────────────────────
-  const disconnect = useCallback(() => {
-    setState({
-      address: null,
-      chainId: null,
-      isConnecting: false,
-      isWrongChain: false,
-      balance: 0n,
-    });
-  }, []);
+  const disconnect = useCallback(() => setState({ ...INITIAL }), []);
 
-  // ── Auto-reconnect on mount ─────────────────────────────
-  useEffect(() => {
-    if (!hasEthereum) return;
-    const eth = (window as any).ethereum;
-
-    eth.request({ method: 'eth_accounts' }).then((accounts: string[]) => {
-      if (accounts.length > 0) {
-        connect();
-      }
-    });
-
-    // Listen for account changes
-    const handleAccountsChanged = (accounts: string[]) => {
-      if (accounts.length === 0) {
-        disconnect();
-      } else {
-        connect();
-      }
-    };
-
-    // Listen for chain changes
-    const handleChainChanged = () => {
-      connect();
-    };
-
-    eth.on?.('accountsChanged', handleAccountsChanged);
-    eth.on?.('chainChanged', handleChainChanged);
-
-    return () => {
-      eth.removeListener?.('accountsChanged', handleAccountsChanged);
-      eth.removeListener?.('chainChanged', handleChainChanged);
-    };
-  }, [hasEthereum, connect, disconnect]);
-
-  // ── Refresh balance ─────────────────────────────────────
   const refreshBalance = useCallback(async () => {
     if (!state.address) return;
-    const balance = await publicClient.getBalance({ address: state.address });
+    const balance = await readBalance(state.address);
     setState((s) => ({ ...s, balance }));
-  }, [state.address]);
+  }, [state.address, readBalance]);
 
-  return {
-    ...state,
-    connect,
-    disconnect,
-    refreshBalance,
-    hasEthereum,
-  };
+  // `connect` is recreated on every render of the consumer, so the listener
+  // effect must not depend on it directly or it would resubscribe constantly.
+  const connectRef = useRef(connect);
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    const eth = getProvider();
+    if (!eth) return;
+
+    void eth.request({ method: 'eth_accounts' }).then((accounts) => {
+      if ((accounts as string[]).length > 0) void connectRef.current();
+    });
+
+    const onAccountsChanged = (...args: unknown[]) => {
+      const accounts = args[0] as string[] | undefined;
+      if (!accounts || accounts.length === 0) setState({ ...INITIAL });
+      else void connectRef.current();
+    };
+
+    // The event carries the new chain id, so there is no reason to re-run the
+    // whole connect flow (and re-prompt the wallet) just to learn it.
+    const onChainChanged = (...args: unknown[]) => {
+      const chainId = Number.parseInt(String(args[0]), 16);
+      setState((s) => ({ ...s, chainId, isWrongChain: chainId !== activeChain.id }));
+    };
+
+    eth.on?.('accountsChanged', onAccountsChanged);
+    eth.on?.('chainChanged', onChainChanged);
+    return () => {
+      eth.removeListener?.('accountsChanged', onAccountsChanged);
+      eth.removeListener?.('chainChanged', onChainChanged);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!state.address) return;
+    const address = state.address;
+    const id = setInterval(() => {
+      void readBalance(address).then((balance) => setState((s) => ({ ...s, balance })));
+    }, BALANCE_POLL_MS);
+    return () => clearInterval(id);
+  }, [state.address, readBalance]);
+
+  /**
+   * EIP-191 personal_sign. The provider agent recovers the signer from this to
+   * prove the caller holds the lease.
+   *
+   * The plain UTF-8 message is passed through deliberately: the wallet applies
+   * the "\x19Ethereum Signed Message:\n<len>" prefix over the UTF-8 bytes and
+   * the agent recomputes the same hash. Hex-encoding here changes how some
+   * wallets hash it and recovery then yields a different address.
+   */
+  const signMessage = useCallback(
+    async (message: string): Promise<string> => {
+      const eth = getProvider();
+      if (!eth || !state.address) throw new Error('Wallet not connected');
+      return (await eth.request({
+        method: 'personal_sign',
+        params: [message, state.address],
+      })) as string;
+    },
+    [state.address],
+  );
+
+  return { ...state, connect, disconnect, refreshBalance, signMessage, hasEthereum };
 }

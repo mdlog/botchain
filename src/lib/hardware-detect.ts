@@ -24,7 +24,7 @@ export interface HardwareInfo {
 function detectGPU(): { model: string; raw: string; hasGpu: boolean } {
   try {
     const canvas = document.createElement('canvas');
-    const gl = (canvas.getContext('webgl') || canvas.getContext('webgl2')) as WebGLRenderingContext | null;
+    const gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
     if (!gl) return { model: 'No GPU', raw: 'No WebGL', hasGpu: false };
 
     const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
@@ -32,7 +32,11 @@ function detectGPU(): { model: string; raw: string; hasGpu: boolean } {
       const renderer = gl.getParameter(gl.RENDERER) as string;
       const parsed = parseGpuModel(renderer || 'Unknown');
       // If we only get a generic string like "Mozilla" or "Google SwiftShader", it's likely CPU/software rendering
-      const hasGpu = parsed !== 'Unknown GPU' && !parsed.toLowerCase().includes('swiftshader') && !parsed.toLowerCase().includes('llvmpipe') && !parsed.toLowerCase().includes('software');
+      const hasGpu =
+        parsed !== 'Unknown GPU' &&
+        !parsed.toLowerCase().includes('swiftshader') &&
+        !parsed.toLowerCase().includes('llvmpipe') &&
+        !parsed.toLowerCase().includes('software');
       return { model: parsed, raw: renderer || 'Unknown', hasGpu };
     }
 
@@ -42,7 +46,11 @@ function detectGPU(): { model: string; raw: string; hasGpu: boolean } {
     const parsed = parseGpuModel(renderer || raw);
 
     // Detect software rendering (CPU-only)
-    const isSoftware = raw.toLowerCase().includes('swiftshader') || raw.toLowerCase().includes('llvmpipe') || raw.toLowerCase().includes('software') || raw.toLowerCase().includes('microsoft basic');
+    const isSoftware =
+      raw.toLowerCase().includes('swiftshader') ||
+      raw.toLowerCase().includes('llvmpipe') ||
+      raw.toLowerCase().includes('software') ||
+      raw.toLowerCase().includes('microsoft basic');
     return { model: parsed, raw, hasGpu: !isSoftware && parsed !== 'Unknown GPU' };
   } catch {
     return { model: 'No GPU', raw: 'Detection failed', hasGpu: false };
@@ -112,10 +120,12 @@ function parseGpuModel(renderer: string): string {
     if (r.includes('arc a750')) return 'Intel Arc A750';
     return 'Intel GPU';
   }
-  if (r.includes('apple') || r.includes('m1') || r.includes('m2') || r.includes('m3')) return 'Apple Silicon GPU';
+  if (r.includes('apple') || r.includes('m1') || r.includes('m2') || r.includes('m3'))
+    return 'Apple Silicon GPU';
 
   // Software rendering detection
-  if (r.includes('swiftshader') || r.includes('llvmpipe') || r.includes('software')) return 'No GPU (Software)';
+  if (r.includes('swiftshader') || r.includes('llvmpipe') || r.includes('software'))
+    return 'No GPU (Software)';
 
   return str.length > 40 ? str.substring(0, 40) : str;
 }
@@ -126,12 +136,27 @@ function parseGpuModel(renderer: string): string {
 function estimateVram(model: string): number {
   const m = model.toLowerCase();
   const vramMap: Record<string, number> = {
-    'h100': 80, 'a100': 80,
-    'rtx 5090': 32, 'rtx 4090': 24, 'rtx 4080': 16, 'rtx 4070': 12,
-    'rtx 3090': 24, 'rtx 3080': 10, 'rtx 3070': 8, 'rtx 3060 ti': 8, 'rtx 3060': 12, 'rtx 3050': 8,
-    'gtx 1660': 6, 'gtx 1080': 8, 'gtx 1070': 8,
-    'rx 7900': 24, 'rx 6900': 16, 'rx 6800': 16, 'rx 6700': 12,
-    'arc a770': 16, 'arc a750': 8,
+    h100: 80,
+    a100: 80,
+    'rtx 5090': 32,
+    'rtx 4090': 24,
+    'rtx 4080': 16,
+    'rtx 4070': 12,
+    'rtx 3090': 24,
+    'rtx 3080': 10,
+    'rtx 3070': 8,
+    'rtx 3060 ti': 8,
+    'rtx 3060': 12,
+    'rtx 3050': 8,
+    'gtx 1660': 6,
+    'gtx 1080': 8,
+    'gtx 1070': 8,
+    'rx 7900': 24,
+    'rx 6900': 16,
+    'rx 6800': 16,
+    'rx 6700': 12,
+    'arc a770': 16,
+    'arc a750': 8,
   };
   for (const [key, val] of Object.entries(vramMap)) {
     if (m.includes(key)) return val;
@@ -146,11 +171,24 @@ function estimateTflops(model: string, cpuCores: number = 0, hasGpu: boolean = t
   if (hasGpu) {
     const m = model.toLowerCase();
     const tflopsMap: Record<string, number> = {
-      'h100': 989, 'a100': 624,
-      'rtx 5090': 105, 'rtx 4090': 165, 'rtx 4080': 97, 'rtx 4070': 48,
-      'rtx 3090': 71, 'rtx 3080': 35, 'rtx 3070': 21, 'rtx 3060': 13, 'rtx 3050': 6,
-      'gtx 1660': 14, 'gtx 1080': 9, 'gtx 1070': 6.5,
-      'rx 7900': 61, 'rx 6900': 51, 'rx 6800': 41, 'rx 6700': 24,
+      h100: 989,
+      a100: 624,
+      'rtx 5090': 105,
+      'rtx 4090': 165,
+      'rtx 4080': 97,
+      'rtx 4070': 48,
+      'rtx 3090': 71,
+      'rtx 3080': 35,
+      'rtx 3070': 21,
+      'rtx 3060': 13,
+      'rtx 3050': 6,
+      'gtx 1660': 14,
+      'gtx 1080': 9,
+      'gtx 1070': 6.5,
+      'rx 7900': 61,
+      'rx 6900': 51,
+      'rx 6800': 41,
+      'rx 6700': 24,
     };
     for (const [key, val] of Object.entries(tflopsMap)) {
       if (m.includes(key)) return val;
@@ -164,15 +202,20 @@ function estimateTflops(model: string, cpuCores: number = 0, hasGpu: boolean = t
 /**
  * Generate a hardware fingerprint from GPU + CPU + screen.
  */
-function generateFingerprint(gpuRaw: string, cpuCores: number, cpuModel: string, screen: string): string {
+function generateFingerprint(
+  gpuRaw: string,
+  cpuCores: number,
+  cpuModel: string,
+  screen: string,
+): string {
   const combined = `${gpuRaw}|${cpuCores}|${cpuModel}|${screen}`;
   let hash = 0;
   for (let i = 0; i < combined.length; i++) {
     const char = combined.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash = hash & hash;
   }
-  return '0x' + (Math.abs(hash).toString(16).padStart(8, '0')).toUpperCase();
+  return '0x' + Math.abs(hash).toString(16).padStart(8, '0').toUpperCase();
 }
 
 /**
@@ -183,7 +226,7 @@ export async function detectHardware(): Promise<HardwareInfo> {
   const gpu = detectGPU();
   const cpuCores = navigator.hardwareConcurrency || 0;
   const cpuModel = detectCpuModel();
-  const ramGB = (navigator as any).deviceMemory || 0;
+  const ramGB = navigator.deviceMemory ?? 0;
 
   let storageGB = 0;
   try {
@@ -191,7 +234,10 @@ export async function detectHardware(): Promise<HardwareInfo> {
       const estimate = await navigator.storage.estimate();
       storageGB = Math.floor((estimate.quota || 0) / (1024 * 1024 * 1024));
     }
-  } catch {}
+  } catch {
+    // navigator.storage is unavailable in some browsers and blocked in others;
+    // the caller renders "unknown" rather than failing the whole detection.
+  }
 
   const screen = `${window.screen.width}×${window.screen.height}`;
 
@@ -213,6 +259,10 @@ export async function detectHardware(): Promise<HardwareInfo> {
 /**
  * Get TFLOPS estimate for a GPU model or CPU-only node.
  */
-export function getTflopsForModel(model: string, cpuCores: number = 0, hasGpu: boolean = true): number {
+export function getTflopsForModel(
+  model: string,
+  cpuCores: number = 0,
+  hasGpu: boolean = true,
+): number {
   return estimateTflops(model, cpuCores, hasGpu);
 }

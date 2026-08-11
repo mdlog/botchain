@@ -25,7 +25,11 @@ export async function getProviderAgentUrlAsync(providerAddress: string): Promise
   try {
     const url = await getProviderAgentUrlFromChain(providerAddress);
     if (url) return url;
-  } catch {}
+  } catch (err) {
+    // A registry read failing is not the same as "no endpoint registered";
+    // the static map below can still answer, but the reason should be visible.
+    console.warn('[providers] AgentRegistry lookup failed:', err);
+  }
   // Fallback to static map
   const key = providerAddress.toLowerCase();
   for (const [addr, url] of Object.entries(FALLBACK_PROVIDER_URLS)) {

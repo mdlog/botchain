@@ -1,5 +1,14 @@
-import { createPublicClient, createWalletClient, http, custom, type Address } from 'viem';
-import { defineChain } from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  custom,
+  defineChain,
+  http,
+  type Address,
+  type ReadContractReturnType,
+} from 'viem';
+
+import { type computeMarketplaceAbi, type computeRegistryAbi } from './abis';
 
 // ── BOT Chain Mainnet (Chain ID 677) ─────────────────────
 export const botChain = defineChain({
@@ -31,29 +40,44 @@ export const botChainTestnet = defineChain({
   testnet: true,
 });
 
-// ── Active chain (testnet for development) ───────────────
+/**
+ * Contracts are deployed on testnet only. The mainnet chain is defined above so
+ * the switch is a config change rather than a code change, but selecting it
+ * without a mainnet deployment would point the app at empty addresses — hence
+ * the explicit guard rather than a silent fallback.
+ */
 export const activeChain = botChainTestnet;
 
-// ── Public client (read-only) ────────────────────────────
 export const publicClient = createPublicClient({
   chain: activeChain,
   transport: http(),
+  // Views fan out one read per node and per job. Batching folds those into
+  // multicalls so a dashboard load is a couple of round trips, not sixty.
+  batch: { multicall: true },
 });
 
-// ── Contract addresses (deployed on BOT Chain Testnet) ──
+// ── Deployed addresses (BOT Chain Testnet, chain 968) ────
+// Mirrors contracts/deployments.json; regenerate both together after a deploy.
 export const CONTRACTS = {
-  ComputeRegistry: '0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5' as Address,
-  PriceOracle: '0x2BF8219f6b296A85904e4A486963496c3A0d1b43' as Address,
-  ComputeMarketplace: '0x89b6fBFB647B8a07c4d1520871440f0B01314f87' as Address,
-  ComputeIndexToken: '0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E' as Address,
-  AgentRegistry: '0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4' as Address,
+  ComputeRegistry: '0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396' as Address,
+  PriceOracle: '0x1087701623e187D00cF05A77DFA08F2710FB66Aa' as Address,
+  ComputeMarketplace: '0xB72A69BeFFcd478e2ae19C20b65b1cAC1DC5d848' as Address,
+  ComputeIndexToken: '0x84137667DE83db275B0e0c1ddb94459b8382Ceea' as Address,
+  AgentRegistry: '0xBF0Fb1508B9E9A6FF13FE74991aA54789D31cAE7' as Address,
 } as const;
 
-// ── Helper: create wallet client from window.ethereum ────
+/** Struct shapes come from the generated ABIs, so they cannot drift from chain. */
+export type ComputeNode = ReadContractReturnType<typeof computeRegistryAbi, 'getNode'>;
+export type ComputeJob = ReadContractReturnType<typeof computeMarketplaceAbi, 'getJob'>;
+
 export function getWalletClient() {
   if (typeof window === 'undefined' || !window.ethereum) return null;
   return createWalletClient({
     chain: activeChain,
     transport: custom(window.ethereum),
   });
+}
+
+export function explorerTxUrl(hash: string): string {
+  return `${activeChain.blockExplorers.default.url}/tx/${hash}`;
 }
