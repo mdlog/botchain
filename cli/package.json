@@ -1,16 +1,23 @@
 {
   "name": "computerwa-cli",
   "version": "1.0.0",
-  "description": "Provider CLI for ComputeRWA — register, activate, verify nodes from terminal",
+  "description": "Provider CLI for BotCompute — register, activate and operate GPU nodes on BOT Chain from the terminal",
+  "license": "MIT",
   "type": "module",
   "main": "cli.js",
   "bin": {
     "computerwa": "./cli.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node cli.js",
+    "setup": "node cli.js setup",
     "register": "node cli.js register",
     "list": "node cli.js list",
+    "mine": "node cli.js mine",
+    "status": "node cli.js status",
     "detect": "node cli.js detect"
   },
   "dependencies": {
