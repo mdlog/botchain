@@ -467,7 +467,10 @@ function NodeCard({ node, onLease }: { node: NodeListing; onLease: () => void })
   // price lookup. Showing it at "0.00/hr" with a live Lease button sent people
   // straight into that revert.
   const priced = node.pricePerHour > 0n;
-  const available = node.status === NODE_STATUS_ACTIVE && priced;
+  // Attestation is what createJob actually gates on. An Active node that the
+  // registry verifier has not attested reverts with NodeNotVerified, so
+  // offering it for lease sends the consumer straight into that revert.
+  const available = node.status === NODE_STATUS_ACTIVE && priced && node.verified;
 
   return (
     <Card className="flex flex-col p-5 transition-colors hover:border-outline/60">
@@ -529,7 +532,13 @@ function NodeCard({ node, onLease }: { node: NodeListing; onLease: () => void })
           onClick={onLease}
           disabled={!available}
         >
-          {available ? 'Lease' : priced ? 'Unavailable' : 'Unpriced'}
+          {available
+            ? 'Lease'
+            : !node.verified
+              ? 'Awaiting attestation'
+              : priced
+                ? 'Unavailable'
+                : 'Unpriced'}
         </Button>
       </div>
     </Card>
@@ -572,7 +581,7 @@ function NodeTable({
             {listings.map((node) => {
               const status = nodeStatus(node.status);
               const priced = node.pricePerHour > 0n;
-              const available = node.status === NODE_STATUS_ACTIVE && priced;
+              const available = node.status === NODE_STATUS_ACTIVE && priced && node.verified;
               return (
                 <tr
                   key={node.nodeId.toString()}
@@ -646,7 +655,13 @@ function NodeTable({
                       onClick={() => onLease(node)}
                       disabled={!available}
                     >
-                      {available ? 'Lease' : priced ? '—' : 'Unpriced'}
+                      {available
+                        ? 'Lease'
+                        : !node.verified
+                          ? 'Unattested'
+                          : priced
+                            ? '—'
+                            : 'Unpriced'}
                     </Button>
                   </Td>
                 </tr>

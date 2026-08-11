@@ -2,6 +2,8 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   UserRejectedRequestError,
+  decodeErrorResult,
+  type Hex,
   type Abi,
   type Account,
   type ContractFunctionArgs,
@@ -11,7 +13,40 @@ import {
   type WalletClient,
 } from 'viem';
 
+import {
+  agentRegistryAbi,
+  computeIndexTokenAbi,
+  computeMarketplaceAbi,
+  computeRegistryAbi,
+  priceOracleAbi,
+} from '@/config/abis';
 import { activeChain, getWalletClient, publicClient } from '@/config/chain';
+
+/**
+ * A call into the marketplace can revert inside the registry or the oracle, and
+ * viem only decodes against the ABI of the contract it called — so those
+ * selectors come back unnamed. Searching every deployed ABI turns
+ * "an unknown error occurred" into the name of what actually rejected.
+ */
+const ALL_ABIS = [
+  computeMarketplaceAbi,
+  computeRegistryAbi,
+  priceOracleAbi,
+  computeIndexTokenAbi,
+  agentRegistryAbi,
+] as const;
+
+function decodeAcrossContracts(raw: Hex | undefined): string | undefined {
+  if (!raw || raw === '0x') return undefined;
+  for (const abi of ALL_ABIS) {
+    try {
+      return decodeErrorResult({ abi, data: raw }).errorName;
+    } catch {
+      // Selector is not from this contract; try the next.
+    }
+  }
+  return undefined;
+}
 
 export class WalletNotConnectedError extends Error {
   constructor() {
@@ -124,11 +159,12 @@ export function describeTxError(err: unknown): string {
 
     const reverted = err.walk((e) => e instanceof ContractFunctionRevertedError);
     if (reverted instanceof ContractFunctionRevertedError) {
-      const name = reverted.data?.errorName;
+      const name = reverted.data?.errorName ?? decodeAcrossContracts(reverted.raw);
       if (name && ERROR_MESSAGES[name]) return ERROR_MESSAGES[name];
       if (name) return `Rejected by the contract (${name}).`;
       // Older deployments and OpenZeppelin's require() paths still use strings.
       if (reverted.reason) return reverted.reason;
+      return 'The contract rejected this call without giving a reason.';
     }
 
     if (/insufficient funds/i.test(err.message)) {
