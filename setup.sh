@@ -386,11 +386,32 @@ build_agent_from_source() {
   fetch_agent_source || return 1
 
   local log="$LOG_DIR/agent-build.log"
+
+  # The release profile uses codegen-units=1 and thin LTO, which give the best
+  # runtime but need the most memory to link — enough to OOM a small VPS partway
+  # through 481 crates. On a low-memory host, trade some of that back so the
+  # build finishes at all; a provider node is I/O bound, not codegen bound.
+  local ram_mb=0
+  if [[ -r /proc/meminfo ]]; then
+    ram_mb=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+  elif have sysctl; then
+    ram_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  fi
+  if [[ "$ram_mb" -gt 0 && "$ram_mb" -lt 4096 ]]; then
+    warn "Only ${ram_mb} MB RAM — building with less aggressive optimisation so the link does not run out of memory."
+    export CARGO_PROFILE_RELEASE_LTO=false
+    export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+    export CARGO_BUILD_JOBS=1
+  fi
+
   info "Building Rust agent (several minutes; log: $log)..."
   # `set -euo pipefail` would abort the whole installer the moment cargo exits
   # non-zero, so the build is guarded — the diagnostics below are the point.
   if ! ( cd compute-agent-rs && cargo build --release ) 2>&1 | tee "$log"; then
     err "cargo build failed. Full output: $log"
+    if grep -qiE "signal: 9|out of memory|Killed" "$log" 2>/dev/null; then
+      err "The compiler was killed — this host ran out of memory. Add swap, or use a prebuilt binary."
+    fi
     return 1
   fi
   if [[ ! -f "$AGENT_BIN" ]]; then

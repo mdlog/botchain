@@ -440,7 +440,6 @@ async function cmdSetup(args) {
     tflops = Math.floor(hw.tflops);
     region = hw.region;
   }
-  if (model === 'CPU Only' && vramGB === 0) vramGB = 1;
 
   console.log('\n━━━ Step 2/3: Register Node ━━━');
   console.log(
@@ -555,7 +554,6 @@ async function cmdRegister(args) {
     tflops = Math.floor(hw.tflops);
     region = hw.region;
   }
-  if (model === 'CPU Only' && vramGB === 0) vramGB = 1;
   console.log(
     '📝 Registering: ' + model + ' / ' + vramGB + 'GB / ' + tflops + ' TFLOPS / ' + region,
   );
