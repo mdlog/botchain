@@ -10,6 +10,7 @@ use alloy::{
     sol,
 };
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::str::FromStr;
@@ -21,7 +22,7 @@ sol! {
     #[sol(rpc)]
     #[allow(missing_docs)]
     contract ComputeMarketplace {
-        enum JobStatus { Pending, Active, Completed, Cancelled, Disputed }
+        enum JobStatus { Pending, Active, Completed, Cancelled }
 
         struct ComputeJob {
             uint64 nodeId;
@@ -74,6 +75,20 @@ sol! {
     }
 }
 
+/// `JobStatus` discriminants, mirrored so callers do not sprinkle bare integers.
+pub const JOB_PENDING: u8 = 0;
+pub const JOB_ACTIVE: u8 = 1;
+pub const JOB_COMPLETED: u8 = 2;
+
+/// `getJob` is one RPC round trip per job and there is no bulk read on the
+/// contract, so a provider scan walks only the tail of the job list. Anything
+/// older than this window is settled history the agent has no work to do on.
+const JOB_SCAN_WINDOW: u64 = 250;
+
+/// Enough parallelism to keep the scan sub-second without stampeding a public
+/// RPC endpoint into rate-limiting the provider.
+const JOB_SCAN_CONCURRENCY: usize = 8;
+
 type Mkt = ComputeMarketplace::ComputeMarketplaceInstance<Arc<DynProvider>>;
 type Reg = ComputeRegistry::ComputeRegistryInstance<Arc<DynProvider>>;
 
@@ -84,6 +99,7 @@ pub struct ChainClient {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobInfo {
     pub job_id: u64,
     pub node_id: u64,
@@ -99,31 +115,35 @@ pub struct JobInfo {
     pub status: u8,
 }
 
+impl JobInfo {
+    /// Unix second at which the lease stops being billable.
+    pub fn expires_at(&self) -> u64 {
+        self.started_at
+            .saturating_add(self.duration_hours.saturating_mul(3600))
+    }
+}
+
 impl ChainClient {
     pub async fn from_env() -> Result<Self> {
-        let priv_key_str = env::var("PROVIDER_PRIVATE_KEY")
-            .context("PROVIDER_PRIVATE_KEY not set")?;
+        let priv_key_str =
+            env::var("PROVIDER_PRIVATE_KEY").context("PROVIDER_PRIVATE_KEY not set")?;
         let key = if priv_key_str.starts_with("0x") {
             priv_key_str
         } else {
             format!("0x{}", priv_key_str)
         };
-        let signer = PrivateKeySigner::from_str(&key)
-            .context("Invalid private key")?;
+        let signer = PrivateKeySigner::from_str(&key).context("Invalid private key")?;
         let provider_address = signer.address();
 
-        let rpc_url = env::var("RPC_URL")
-            .unwrap_or_else(|_| "https://rpc.bohr.life".to_string());
+        let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| "https://rpc.bohr.life".to_string());
 
         let marketplace_addr = env::var("MARKETPLACE_ADDR")
-            .unwrap_or_else(|_| "0x89b6fBFB647B8a07c4d1520871440f0B01314f87".to_string());
+            .unwrap_or_else(|_| "0xB72A69BeFFcd478e2ae19C20b65b1cAC1DC5d848".to_string());
         let registry_addr = env::var("REGISTRY_ADDR")
-            .unwrap_or_else(|_| "0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5".to_string());
+            .unwrap_or_else(|_| "0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396".to_string());
 
-        let mkt = Address::from_str(&marketplace_addr)
-            .context("Invalid MARKETPLACE_ADDR")?;
-        let reg = Address::from_str(&registry_addr)
-            .context("Invalid REGISTRY_ADDR")?;
+        let mkt = Address::from_str(&marketplace_addr).context("Invalid MARKETPLACE_ADDR")?;
+        let reg = Address::from_str(&registry_addr).context("Invalid REGISTRY_ADDR")?;
 
         // connect() is async in alloy 1.8.3
         let provider = ProviderBuilder::new()
@@ -137,15 +157,26 @@ impl ChainClient {
 
         info!("ChainClient init: provider={:?}", provider_address);
 
-        Ok(Self { marketplace, registry, provider_address })
+        Ok(Self {
+            marketplace,
+            registry,
+            provider_address,
+        })
     }
 
     pub fn address(&self) -> Address {
         self.provider_address
     }
 
+    /// True when `candidate` is this agent's own provider address.
+    pub fn is_self(&self, candidate: &str) -> bool {
+        candidate.eq_ignore_ascii_case(&self.provider_address.to_string())
+    }
+
     pub async fn get_job(&self, job_id: u64) -> Result<JobInfo> {
-        let job = self.marketplace.getJob(U256::from(job_id))
+        let job = self
+            .marketplace
+            .getJob(U256::from(job_id))
             .call()
             .await
             .context("getJob failed")?;
@@ -167,7 +198,9 @@ impl ChainClient {
     }
 
     pub async fn total_jobs(&self) -> Result<u64> {
-        let total = self.marketplace.totalJobs()
+        let total = self
+            .marketplace
+            .totalJobs()
             .call()
             .await
             .context("totalJobs failed")?;
@@ -175,7 +208,8 @@ impl ChainClient {
     }
 
     pub async fn accept_job(&self, job_id: u64) -> Result<()> {
-        self.marketplace.acceptJob(U256::from(job_id))
+        self.marketplace
+            .acceptJob(U256::from(job_id))
             .send()
             .await
             .context("acceptJob tx failed")?
@@ -187,7 +221,8 @@ impl ChainClient {
     }
 
     pub async fn complete_job(&self, job_id: u64) -> Result<()> {
-        self.marketplace.completeJob(U256::from(job_id))
+        self.marketplace
+            .completeJob(U256::from(job_id))
             .send()
             .await
             .context("completeJob tx failed")?
@@ -198,34 +233,48 @@ impl ChainClient {
         Ok(())
     }
 
+    /// Jobs assigned to this provider, newest `JOB_SCAN_WINDOW` ids only.
     pub async fn get_provider_jobs(&self) -> Result<Vec<JobInfo>> {
         let total = self.total_jobs().await?;
-        let mut jobs = Vec::new();
-        let addr_lower = self.provider_address.to_string().to_lowercase();
+        if total == 0 {
+            return Ok(Vec::new());
+        }
+        let oldest = total.saturating_sub(JOB_SCAN_WINDOW).max(1);
 
-        for i in 1..=total {
-            match self.get_job(i).await {
-                Ok(job) => {
-                    if job.provider.to_lowercase() == addr_lower {
-                        jobs.push(job);
+        let mut jobs: Vec<JobInfo> = futures_util::stream::iter(oldest..=total)
+            .map(|id| async move { (id, self.get_job(id).await) })
+            .buffer_unordered(JOB_SCAN_CONCURRENCY)
+            .filter_map(|(id, res)| async move {
+                match res {
+                    Ok(job) if self.is_self(&job.provider) => Some(job),
+                    Ok(_) => None,
+                    Err(e) => {
+                        warn!("Failed to fetch job {}: {}", id, e);
+                        None
                     }
                 }
-                Err(e) => warn!("Failed to fetch job {}: {}", i, e),
-            }
-        }
+            })
+            .collect()
+            .await;
+
+        // buffer_unordered yields out of order; callers log and diff by id.
+        jobs.sort_unstable_by_key(|j| j.job_id);
         Ok(jobs)
     }
 
     pub async fn get_provider_nodes(&self) -> Result<Vec<u64>> {
-        let nodes = self.registry.getProviderNodes(self.provider_address)
+        let nodes = self
+            .registry
+            .getProviderNodes(self.provider_address)
             .call()
             .await
             .context("getProviderNodes failed")?;
-        Ok(nodes.into_iter().map(|n| n).collect())
+        Ok(nodes)
     }
 
     pub async fn heartbeat(&self, node_id: u64) -> Result<()> {
-        self.registry.heartbeat(node_id)
+        self.registry
+            .heartbeat(node_id)
             .send()
             .await
             .context("heartbeat tx failed")?

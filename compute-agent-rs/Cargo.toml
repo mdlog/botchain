@@ -1,21 +1,31 @@
 [package]
 name = "computerwa-agent"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2024"
-description = "ComputeRWA Provider Agent — Rust implementation with sandboxed execution"
+rust-version = "1.87"
+description = "BotCompute provider agent — sandboxed code execution, interactive terminal sessions, and on-chain job settlement for the BotCompute GPU marketplace on BOT Chain"
+license = "MIT"
+repository = "https://github.com/mdlog/botchain"
+# Operator software for a testnet marketplace, not a library.
+publish = false
 
 [dependencies]
 # HTTP server
-axum = "0.8"
-tower = "0.5"
+axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io"] }
 
 # EVM (alloy)
 alloy = { version = "1", features = ["full"] }
+
+# Concurrent session map
+dashmap = "6"
+
+# Docker daemon client (interactive terminal runs in a per-session container)
+bollard = "0.21"
+futures-util = "0.3"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -31,12 +41,8 @@ dotenvy = "0.15"
 # Utils
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
-hex = "0.4"
 anyhow = "1"
 thiserror = "2"
-
-# Process management
-nix = { version = "0.30", features = ["process", "signal", "sched", "mount", "fs"] }
 
 [profile.release]
 opt-level = 3

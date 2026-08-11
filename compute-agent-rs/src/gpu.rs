@@ -4,11 +4,12 @@
 // and `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits`.
 // Falls back gracefully if nvidia-smi is not installed (non-NVIDIA systems).
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuInfo {
     pub index: u32,
     pub model: String,
@@ -25,10 +26,7 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
     }
 
     // Get GPU list: "GPU 0: NVIDIA GeForce RTX 3060 (UUID: GPU-xxx)"
-    let list_output = match Command::new("nvidia-smi")
-        .arg("-L")
-        .output()
-    {
+    let list_output = match Command::new("nvidia-smi").arg("-L").output() {
         Ok(out) => out,
         Err(e) => {
             info!("🔍 nvidia-smi -L failed: {}", e);
@@ -49,12 +47,10 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
         .output();
 
     let vram_lines: Vec<String> = match &vram_output {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(|l| l.trim().to_string())
-                .collect()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .collect(),
         _ => Vec::new(),
     };
 
@@ -94,7 +90,11 @@ fn parse_gpu_name(line: &str) -> String {
     let after_prefix = line.split(": ").nth(1).unwrap_or(line);
 
     // Strip " (UUID: ...)" suffix
-    let name_part = after_prefix.split(" (UUID").next().unwrap_or(after_prefix).trim();
+    let name_part = after_prefix
+        .split(" (UUID")
+        .next()
+        .unwrap_or(after_prefix)
+        .trim();
 
     // Normalize: "NVIDIA GeForce RTX 3060" → "NVIDIA RTX 3060"
     // "NVIDIA H100 80GB HBM3" → "NVIDIA H100"
@@ -130,12 +130,13 @@ fn which(cmd: &str) -> Option<String> {
 
 /// Summary of all detected GPUs for display.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuSummary {
     pub count: u32,
-    pub models: Vec<String>,      // e.g. ["NVIDIA RTX 3060", "NVIDIA RTX 3060"]
-    pub total_vram_mb: u32,       // sum of all VRAM
-    pub unified_model: String,    // e.g. "NVIDIA RTX 3060 ×2"
-    pub gpus: Vec<GpuInfo>,       // individual GPU details
+    pub models: Vec<String>,   // e.g. ["NVIDIA RTX 3060", "NVIDIA RTX 3060"]
+    pub total_vram_mb: u32,    // sum of all VRAM
+    pub unified_model: String, // e.g. "NVIDIA RTX 3060 ×2"
+    pub gpus: Vec<GpuInfo>,    // individual GPU details
 }
 
 /// Get a summary of all GPUs for the /info endpoint.
