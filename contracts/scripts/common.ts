@@ -20,11 +20,15 @@ export interface ContractHandle {
   connect(runner: ContractRunner | null): ContractHandle;
 }
 
-export interface Deployments {
-  network: string;
+/** One network's deployment record. deployments.json is keyed by chain id so
+ *  testnet and mainnet coexist instead of overwriting each other. */
+export interface Deployment {
+  name: string;
   contracts: Record<string, string>;
   deployedAt: string;
 }
+
+export type DeploymentsFile = Record<string, Deployment>;
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,24 +47,44 @@ export async function attachContract(name: string, address: string): Promise<Con
   return (await ethers.getContractAt(name, address)) as unknown as ContractHandle;
 }
 
-/** Reads deployments.json, failing loudly when the stack has not been deployed. */
-export function readDeployments(): Deployments {
-  if (!existsSync(DEPLOYMENTS_PATH)) {
-    throw new Error(`${DEPLOYMENTS_PATH} not found — run "npm run deploy:testnet" first`);
-  }
-  return JSON.parse(readFileSync(DEPLOYMENTS_PATH, 'utf8')) as Deployments;
+/** Chain id of the network the script is connected to. */
+export async function currentChainId(): Promise<number> {
+  return Number((await ethers.provider.getNetwork()).chainId);
 }
 
-/** Writes deployments.json. */
-export function writeDeployments(deployments: Deployments): void {
-  writeFileSync(DEPLOYMENTS_PATH, `${JSON.stringify(deployments, null, 2)}\n`);
+function readFile(): DeploymentsFile {
+  if (!existsSync(DEPLOYMENTS_PATH)) return {};
+  return JSON.parse(readFileSync(DEPLOYMENTS_PATH, 'utf8')) as DeploymentsFile;
+}
+
+/**
+ * Reads the deployment for one chain, failing loudly when that chain has never
+ * been deployed to — a script that silently targets the wrong network is worse
+ * than one that stops.
+ */
+export function readDeployments(chainId: number): Deployment {
+  const entry = readFile()[String(chainId)];
+  if (entry === undefined) {
+    throw new Error(
+      `No deployment recorded for chain ${chainId} in ${DEPLOYMENTS_PATH}. ` +
+        `Run the deploy script for that network first.`,
+    );
+  }
+  return entry;
+}
+
+/** Merges one chain's record into the file, leaving the other chains alone. */
+export function writeDeployments(chainId: number, entry: Deployment): void {
+  const all = readFile();
+  all[String(chainId)] = entry;
+  writeFileSync(DEPLOYMENTS_PATH, `${JSON.stringify(all, null, 2)}\n`);
 }
 
 /** Looks up a deployed address, failing loudly when it is missing. */
-export function requireAddress(deployments: Deployments, name: string): string {
-  const address = deployments.contracts[name];
+export function requireAddress(deployment: Deployment, name: string): string {
+  const address = deployment.contracts[name];
   if (address === undefined || address === '') {
-    throw new Error(`${name} is not present in deployments.json`);
+    throw new Error(`${name} is not present in the deployment for ${deployment.name}`);
   }
   return address;
 }

@@ -1,6 +1,6 @@
 import pkg from 'hardhat';
 
-import { readDeployments, requireAddress, run } from './common.ts';
+import { readDeployments, requireAddress, run, currentChainId } from './common.ts';
 
 const { ethers } = pkg;
 
@@ -13,7 +13,7 @@ const AMOUNT = process.env.FUND_AMOUNT ?? '0.2';
 
 async function main(): Promise<void> {
   const [signer] = await ethers.getSigners();
-  const marketplace = requireAddress(readDeployments(), 'ComputeMarketplace');
+  const marketplace = requireAddress(readDeployments(await currentChainId()), 'ComputeMarketplace');
 
   console.log('Sender:', signer.address);
   console.log(

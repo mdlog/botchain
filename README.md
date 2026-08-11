@@ -79,11 +79,34 @@ verifiable on the live testnet deployment:
 | `ComputeIndexToken`  | `0x84137667DE83db275B0e0c1ddb94459b8382Ceea` | CIF — the RWA token                                                   |
 | `AgentRegistry`      | `0xBF0Fb1508B9E9A6FF13FE74991aA54789D31cAE7` | Provider address → agent endpoint                                     |
 
+All five are **source-verified** on the explorer — the code below is the code running on chain:
+<https://scan.bohr.life/address/0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396#code>
+
 Explorer: <https://scan.bohr.life> · RPC: `https://rpc.bohr.life` · Faucet: <https://faucet.botchain.ai>
 
-Addresses live in `contracts/deployments.json`; `src/config/chain.ts` mirrors them, and
-`npm run sync-abis` in `contracts/` regenerates the frontend's const-typed ABIs from the compiled
-artifacts.
+Addresses live in `contracts/deployments.json`, keyed by chain id; `DEPLOYMENTS` in
+`src/config/chain.ts` mirrors them, and `npm run sync-abis` in `contracts/` regenerates the
+frontend's const-typed ABIs from the compiled artifacts.
+
+### Promoting to mainnet
+
+Testnet is deliberately the proving ground: chain 968 runs the same contracts, the same agent and
+the same frontend as mainnet will, so everything is exercised before real value is at stake. The
+promotion is a deploy plus a config switch, not a code change:
+
+```bash
+cd contracts
+npm run deploy:mainnet        # DEPLOYER_PRIVATE_KEY must hold BOT for gas
+npm run seed:demo:mainnet     # register, activate and attest the operator's nodes
+npm run verify:mainnet <address> [constructor args]
+```
+
+Then add the resulting addresses to `DEPLOYMENTS[677]` in `src/config/chain.ts` and build with
+`VITE_CHAIN=mainnet`. A chain with no recorded deployment fails at load rather than pointing every
+read at a zero address and rendering an empty marketplace as if the network were merely quiet.
+
+A full deploy — five contracts, role wiring, seven oracle benchmarks and prices, plus node
+registration — cost 0.19 DGRAM at 20 gwei on testnet.
 
 ### Seeded oracle rates
 
@@ -224,6 +247,33 @@ npm run preview      # serve the build WITH the AI proxy
 CI runs the frontend gate, the contract test suite, `cargo fmt --check` + `cargo clippy -D warnings`
 
 - `cargo build --release`, and `shellcheck setup.sh` on every push and pull request.
+
+## Compliance posture
+
+The cashflow underneath CIF is a digital-service fee: hourly GPU rental, billed per second of
+actual use. That is ordinary service revenue, not the return on a financial instrument.
+
+What deserves scrutiny is the token, and it is worth stating precisely rather than waving at.
+CIF is minted per node against revenue that node has already settled on chain, capped by
+`ExceedsSettledRevenue`. It redeems at `backing / totalSupply`, and the backing grows because the
+marketplace routes a 5% share of every settlement into the fund. So holders do participate in
+network revenue — that is the point of the instrument, and it is also the feature that would
+attract regulatory attention in a real deployment. Calling it a simple deposit receipt would be
+inaccurate.
+
+Three properties make the position defensible for an MVP:
+
+- **Issuance cannot exceed delivered work.** Supply is bounded by settled revenue per node, so CIF
+  cannot be minted against capital that never performed compute.
+- **Attestation is a named role, not an assertion.** `verifier` is a single address today, but it is
+  explicit, rotatable, and separate from ownership — there is a party accountable for saying a node
+  is real.
+- **Every step is auditable.** Registration, attestation, lease, settlement, minting and redemption
+  are all on-chain events on a verified contract.
+
+A production version needs three things this does not have: node attestation backed by hardware
+fingerprints rather than self-declaration, a transfer-restriction layer for jurisdictions that
+require it, and a named issuing entity standing behind the fund.
 
 ## Known limitations
 

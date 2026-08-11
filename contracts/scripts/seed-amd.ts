@@ -1,6 +1,6 @@
 import pkg from 'hardhat';
 
-import { attachContract, readDeployments, requireAddress, run } from './common.ts';
+import { attachContract, readDeployments, requireAddress, run, currentChainId } from './common.ts';
 
 const { ethers } = pkg;
 
@@ -9,7 +9,7 @@ const PRICE = '0.12';
 const CONFIDENCE = 8500;
 
 async function main(): Promise<void> {
-  const deployments = readDeployments();
+  const deployments = readDeployments(await currentChainId());
   const oracle = await attachContract('PriceOracle', requireAddress(deployments, 'PriceOracle'));
 
   await (await oracle.setBenchmark(MODEL, 2500)).wait();

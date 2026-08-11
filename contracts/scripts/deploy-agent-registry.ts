@@ -1,6 +1,12 @@
 import pkg from 'hardhat';
 
-import { deployContract, readDeployments, run, writeDeployments } from './common.ts';
+import {
+  deployContract,
+  readDeployments,
+  run,
+  writeDeployments,
+  currentChainId,
+} from './common.ts';
 
 const { ethers } = pkg;
 
@@ -12,10 +18,13 @@ async function main(): Promise<void> {
   const address = await registry.getAddress();
   console.log('AgentRegistry deployed:', address);
 
-  const deployments = readDeployments();
-  deployments.contracts = { ...deployments.contracts, AgentRegistry: address };
-  deployments.deployedAt = new Date().toISOString();
-  writeDeployments(deployments);
+  const chainId = await currentChainId();
+  const deployment = readDeployments(chainId);
+  writeDeployments(chainId, {
+    ...deployment,
+    contracts: { ...deployment.contracts, AgentRegistry: address },
+    deployedAt: new Date().toISOString(),
+  });
   console.log('Updated deployments.json');
 }
 

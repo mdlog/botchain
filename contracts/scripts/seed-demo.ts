@@ -1,6 +1,6 @@
 import pkg from 'hardhat';
 
-import { attachContract, readDeployments, requireAddress, run } from './common.ts';
+import { attachContract, readDeployments, requireAddress, run, currentChainId } from './common.ts';
 
 const { ethers } = pkg;
 
@@ -25,7 +25,7 @@ const NODES = [
 
 async function main(): Promise<void> {
   const [signer] = await ethers.getSigners();
-  const deployments = readDeployments();
+  const deployments = readDeployments(await currentChainId());
   const registry = await attachContract(
     'ComputeRegistry',
     requireAddress(deployments, 'ComputeRegistry'),

@@ -9,7 +9,10 @@
     "sync-abis": "hardhat run scripts/sync-abis.ts",
     "seed:demo": "hardhat run scripts/seed-demo.ts --network botchain-testnet",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network botchain-testnet",
-    "verify:testnet": "hardhat verify --network botchain-testnet"
+    "verify:testnet": "hardhat verify --network botchain-testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network botchain-mainnet",
+    "seed:demo:mainnet": "hardhat run scripts/seed-demo.ts --network botchain-mainnet",
+    "verify:mainnet": "hardhat verify --network botchain-mainnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

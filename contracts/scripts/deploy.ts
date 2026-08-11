@@ -81,8 +81,8 @@ async function main(): Promise<void> {
     );
   }
 
-  writeDeployments({
-    network: network.chainId.toString(),
+  writeDeployments(Number(network.chainId), {
+    name: network.name === 'unknown' ? `chain ${network.chainId}` : network.name,
     contracts: {
       ComputeRegistry: registryAddr,
       PriceOracle: oracleAddr,
