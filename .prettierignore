@@ -1,0 +1,11 @@
+dist/
+node_modules/
+coverage/
+public/
+package-lock.json
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+compute-agent-rs/target/
+src/config/*.abi.json
+CHANGELOG.md

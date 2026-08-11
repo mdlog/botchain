@@ -1,26 +1,37 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "experimentalDecorators": true,
-    "useDefineForClassFields": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "isolatedModules": true,
     "moduleDetection": "force",
-    "allowJs": true,
-    "jsx": "react-jsx",
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    },
+    "isolatedModules": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
-  }
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client", "node"],
+
+    /* Type safety. The codebase passes `strict` today; keeping these on is what
+       stops it from regressing. `noUncheckedIndexedAccess` is deliberately left
+       off — it would flag several hundred safe array reads for no real gain. */
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  /* Without these, `tsc --noEmit` walks dist/, the Hardhat workspace and any
+     stray .js on disk, so the typecheck result depends on build leftovers
+     rather than on source. */
+  "include": ["src", "vite.config.ts", "vite-ai-proxy.ts"],
+  "exclude": ["node_modules", "dist", "contracts", "cli", "compute-agent-rs"]
 }

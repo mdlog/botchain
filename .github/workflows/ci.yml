@@ -1,0 +1,103 @@
+name: CI
+
+# Runs on every push and PR. The point is the clean-checkout guarantee: the
+# repo previously built only on the author's machine because several source
+# files were never committed, and nothing checked.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint · typecheck · test · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx vite build
+
+  contracts:
+    name: Contracts (compile · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: contracts/package-lock.json
+
+      - run: npm ci
+      - run: npm run compile
+      - run: npm run typecheck
+      - run: npm test
+
+  agent:
+    name: Provider agent (fmt · clippy · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: compute-agent-rs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compute-agent-rs/target
+          key: agent-cargo-${{ hashFiles('compute-agent-rs/Cargo.lock') }}
+          restore-keys: agent-cargo-
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo build --release
+
+  shell:
+    name: Installer script (shellcheck · source list)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck setup.sh
+
+      # setup.sh rebuilds the agent by downloading its sources one file at a
+      # time. A module added to main.rs but missed there compiles locally and
+      # fails on every provider machine — it has happened twice.
+      - name: Installer fetches every agent module
+        run: |
+          missing=0
+          for m in $(grep -oP '^mod \K\w+' compute-agent-rs/src/main.rs); do
+            [ -f "compute-agent-rs/src/$m.rs" ] || continue
+            if ! grep -q "src/$m.rs" setup.sh; then
+              echo "::error::setup.sh does not download compute-agent-rs/src/$m.rs"
+              missing=1
+            fi
+          done
+          exit $missing

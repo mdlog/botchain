@@ -1,0 +1,74 @@
+name: Release Compute Agent (precompiled binaries)
+
+# Builds the BotCompute provider agent (compute-agent-rs) as precompiled
+# binaries for Linux amd64 + arm64 and attaches them to a GitHub Release.
+# setup.sh downloads these instead of compiling from source on the provider's
+# machine (cuts setup from ~15 min + OOM risk to <1 min).
+#
+# Trigger: push a tag matching `v*` (e.g. v0.1.0).
+# Asset naming mirrors setup.sh's `uname -m` arch scheme:
+#   computerwa-agent-linux-amd64, computerwa-agent-linux-arm64
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to create the release + upload assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04 # older glibc → forward-compatible on more distros
+            arch: linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm # native arm64 runner (avoids ring/openssl cross-compile pain)
+            arch: linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          # Edition 2024 (Cargo.toml) requires Rust 1.85+; stable satisfies it.
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compute-agent-rs/target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('compute-agent-rs/Cargo.lock', 'compute-agent-rs/Cargo.toml') }}
+          restore-keys: ${{ matrix.target }}-cargo-
+
+      - name: Build release binary
+        working-directory: compute-agent-rs
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (shrink size)
+        run: |
+          BIN="compute-agent-rs/target/${{ matrix.target }}/release/computerwa-agent"
+          strip "$BIN" || true
+          ls -lh "$BIN"
+
+      - name: Rename to release asset name
+        run: |
+          mv \
+            "compute-agent-rs/target/${{ matrix.target }}/release/computerwa-agent" \
+            "computerwa-agent-${{ matrix.arch }}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: computerwa-agent-${{ matrix.arch }}
+          # softprops/action-gh-release creates the release (if tag pushed) and attaches files.
+          fail_on_unmatched_files: true
