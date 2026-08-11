@@ -1,333 +1,263 @@
-# ComputeRWA — AI-Powered Compute Marketplace & RWA Tokenization on BOT Chain
+# BotCompute — decentralized GPU compute marketplace on BOT Chain
 
 <div align="center">
 
 **BOT Chain Builder Challenge #2 — RWA Track**
 
-AI-powered decentralized compute marketplace where providers register GPU/CPU nodes, consumers lease compute time paid in BOT/DGRAM, and provider revenue is tokenized as CIF (Compute Indexed Fund) ERC20 — tradeable RWA assets.
+Providers register real GPU/CPU nodes on-chain, consumers lease compute time paid in DGRAM, and
+settled provider revenue is tokenized as **CIF** — an ERC-20 whose backing grows with every job the
+network actually completes. Run code or open an isolated interactive shell on leased hardware.
 
 </div>
 
 ---
 
-## 🏗️ Architecture
+## What makes this an RWA, not a wrapper
+
+The asset behind CIF is settled compute revenue, and the contracts enforce that link:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Consumer Browser                       │
-│  (React 19 + viem + Tailwind v4)                          │
-│                                                           │
-│  Dashboard │ Marketplace │ Compute Session │ Financial   │
-│       │           │              │               │        │
-│       ▼           ▼              ▼               ▼        │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │           Smart Contracts (BOT Chain)                │ │
-│  │                                                       │ │
-│  │  ComputeRegistry │ PriceOracle │ ComputeMarketplace  │ │
-│  │                                       │               │ │
-│  │              ComputeIndexToken (CIF)  │               │ │
-│  └───────────────────────────────────────┼───────────────┘ │
-│                                          │                 │
-│            ┌─────────────────────────────┼──────────┐      │
-│            ▼                             ▼          ▼      │
-│  ┌──────────────────┐        ┌──────────────────┐        │
-│  │  Provider Agent   │        │  Provider Agent   │        │
-│  │  (Node #1)        │        │  (Node #2)        │        │
-│  │  agent.mdloglabs  │        │  agent2.mdloglabs │        │
-│  │  Express + viem   │        │  Express + viem   │        │
-│  │  Python3/Node exec│        │  Python3/Node exec│        │
-│  └──────────────────┘        └──────────────────┘        │
-└─────────────────────────────────────────────────────────┘
+Provider registers a node          ComputeRegistry.registerNode
+        ↓
+Registry verifier attests it       ComputeRegistry.verifyNode   ← verifier-only role
+        ↓
+Consumer leases it                 ComputeMarketplace.createJob  ← priced from the NODE's model
+        ↓
+Provider runs the workload         compute-agent-rs, signature-gated per lease
+        ↓
+Lease settles on-chain             completeJob / settleExpiredJob
+        ├── provider paid for elapsed time only, remainder refunded
+        ├── node.totalRevenue += actualCost
+        └── 5% of settled revenue → ComputeIndexToken.receiveRevenue()
+        ↓
+Provider mints CIF                 depositRevenue, capped at that node's settled revenue
+        ↓
+CIF redeems at the index price     backing / totalSupply, above 1.0 once revenue accrues
 ```
 
-## 🔑 Core Concepts
+Two invariants make the claim checkable rather than asserted, and both are covered by tests and
+verifiable on the live testnet deployment:
 
-### Compute Lifecycle
-1. **Register** — Provider registers GPU/CPU node on-chain (ComputeRegistry)
-2. **Verify** — Node gets verified by registry owner
-3. **Price** — AI Pricing Engine (Gemini) pushes fair BOT/hr rates to PriceOracle
-4. **Lease** — Consumer browses Marketplace, selects node, pays upfront (ComputeMarketplace)
-5. **Activate** — Provider accepts job → countdown timer starts
-6. **Execute** — Consumer writes code in Compute Session → POST to provider agent → code runs on provider's machine
-7. **Settle** — Timer expires → auto-complete on-chain → revenue flows to provider
-8. **Tokenize** — Provider deposits DGRAM revenue → mint CIF tokens (ERC20 RWA) → tradeable on BDEX
+- `depositRevenue` reverts with `ExceedsSettledRevenue` above `node.totalRevenue`, so nobody can mint
+  CIF against DGRAM a node did not earn.
+- `getIndexPrice()` moves off `1e18` only when the marketplace routes real revenue in, and
+  `receiveRevenue()` reverts with `NotMarketplace` for anyone else.
 
-### CIF Token (Compute Indexed Fund)
-- ERC20 token representing fractional ownership of compute revenue
-- Provider deposits DGRAM → mint CIF 1:1
-- Burn CIF → withdraw DGRAM
-- 0.5% withdrawal fee
-- Tradeable on BDEX (BOT Chain DEX)
+## Architecture
 
-### AI Pricing Engine
-- Powered by Gemini API with heuristic fallback
-- Factors: GPU model, VRAM, TFLOPS, region, demand, supply
-- Outputs: fair price (BOT/hr), confidence score, risk assessment
-- Pushes prices to on-chain PriceOracle contract
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Consumer browser — React 19 · viem · Tailwind v4            │
+│  Dashboard │ Explore │ Execute │ My Nodes │ Finance │ Settings│
+└───────────────┬──────────────────────────────────────────────┘
+                │ typed contract calls (viem, const-typed ABIs)
+┌───────────────▼──────────────────────────────────────────────┐
+│  BOT Chain Testnet — chain 968                               │
+│                                                              │
+│  ComputeRegistry ── PriceOracle ── ComputeMarketplace        │
+│         │                                  │                 │
+│         └────────── AgentRegistry          ▼                 │
+│                          │        ComputeIndexToken (CIF)    │
+└──────────────────────────┼───────────────────────────────────┘
+                           │ provider publishes its endpoint
+┌──────────────────────────▼───────────────────────────────────┐
+│  Provider agent — compute-agent-rs (Rust · axum · alloy)     │
+│  /execute        bubblewrap jail, no network, scrubbed env    │
+│  /terminal/{id}  Docker session, caps dropped, read-only root │
+│  every mutating route: EIP-191 signature checked against the  │
+│  on-chain job.consumer / job.provider                         │
+└──────────────────────────────────────────────────────────────┘
+```
 
-## 📦 Smart Contracts
+## Deployed contracts — BOT Chain Testnet (chain 968)
 
-| Contract | Purpose | Solidity |
-|---|---|---|
-| `ComputeRegistry` | Node registration, status, verification, revenue tracking | 0.8.24 |
-| `PriceOracle` | AI-pushed GPU/CPU pricing with confidence scores | 0.8.24 |
-| `ComputeMarketplace` | Job creation, acceptance, completion, cancellation | 0.8.24 |
-| `ComputeIndexToken (CIF)` | ERC20 RWA token — deposit revenue → mint, burn → withdraw | 0.8.24 |
+| Contract             | Address                                      | Role                                                                  |
+| -------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
+| `ComputeRegistry`    | `0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396` | Node registration, status, verifier-gated attestation, revenue ledger |
+| `PriceOracle`        | `0x1087701623e187D00cF05A77DFA08F2710FB66Aa` | AI-published GPU rates with floor, ceiling and confidence             |
+| `ComputeMarketplace` | `0xB72A69BeFFcd478e2ae19C20b65b1cAC1DC5d848` | Lease escrow, settlement, extension, expiry recovery                  |
+| `ComputeIndexToken`  | `0x84137667DE83db275B0e0c1ddb94459b8382Ceea` | CIF — the RWA token                                                   |
+| `AgentRegistry`      | `0xBF0Fb1508B9E9A6FF13FE74991aA54789D31cAE7` | Provider address → agent endpoint                                     |
 
-### Deployed Addresses (BOT Chain Testnet — Chain ID 968)
+Explorer: <https://scan.bohr.life> · RPC: `https://rpc.bohr.life` · Faucet: <https://faucet.botchain.ai>
 
-| Contract | Address |
-|---|---|
-| ComputeRegistry | `0x91778B39490e6193c27A32a35dd33b7B14F54EC0` |
-| PriceOracle | `0x95D102579C544BA2756F344eC2Ad09D677CFAe49` |
-| ComputeMarketplace | `0xd93C4006888d5A707b9e072685d6aD36a91228d2` |
-| ComputeIndexToken (CIF) | `0xE61DD019294Ab52eF69714a948E65b9a31947c1e` |
+Addresses live in `contracts/deployments.json`; `src/config/chain.ts` mirrors them, and
+`npm run sync-abis` in `contracts/` regenerates the frontend's const-typed ABIs from the compiled
+artifacts.
 
-### Seeded GPU Prices (Oracle)
-| GPU | Price (DGRAM/hr) | Confidence |
-|---|---|---|
-| NVIDIA H100 | 3.10 | 85% |
-| NVIDIA A100 | 1.80 | 88% |
-| NVIDIA RTX 4090 | 0.85 | 92% |
-| NVIDIA RTX 3090 | 0.45 | 90% |
-| NVIDIA RTX 3060 | 0.15 | 85% |
+### Seeded oracle rates
 
-## 🖥️ Frontend
+| GPU             | DGRAM/hr | Confidence |
+| --------------- | -------- | ---------- |
+| NVIDIA H100     | 3.10     | 85%        |
+| NVIDIA A100     | 1.80     | 88%        |
+| NVIDIA RTX 4090 | 0.85     | 92%        |
+| NVIDIA RTX 3090 | 0.45     | 90%        |
+| NVIDIA RTX 3060 | 0.15     | 85%        |
+| AMD Radeon GPU  | 0.12     | 85%        |
+| CPU Only        | 0.02     | 70%        |
 
-**Stack:** Vite + React 19 + Tailwind v4 + viem 2.55
+## AI pricing
 
-### Views
-- **Dashboard** — Network stats (active nodes, jobs, volume, TVL, CIF supply/index price)
-- **Marketplace** — Browse compute nodes, grid/list toggle, filters (GPU model, region, verified), lease compute
-- **Compute Session** — Code editor (Python3/Node.js), live execution on provider machine, countdown timer, extend lease, output panel
-- **Node Management** — Register node (auto-detect hardware), status control, job queue (accept/complete), revenue tracking
-- **Financial Layer** — Deposit DGRAM → mint CIF, burn CIF → withdraw, TVL, index price
+The oracle is written by an AI pricing pass, not seeded once and forgotten. `src/lib/pricing.ts`
+prices the **whole catalog in a single call** so the tiers stay internally consistent — pricing each
+card in its own call let every answer pick its own scale, and an H100 came back at 23× an A100. The
+prompt is anchored to the current rate card and the result is bounded to ⅓–3× of it, because DGRAM
+has no external reference price for a model to calibrate against.
 
-### Key Features
-- **Hardware Auto-Detection** — WebGL renderer info + Navigator API (GPU model, VRAM, CPU cores, RAM, storage)
-- **CPU-Only Node Support** — Nodes without GPU can still register (TFLOPS estimated from CPU cores)
-- **Duplicate Prevention** — Frontend blocks duplicate GPU registration
-- **Per-Node Agent Routing** — Each node routes compute requests to its own provider agent
-- **Countdown Timer** — Auto-complete when lease expires, extend option before expiry
+The `aiOperator` (or the oracle owner) gets a **Reprice with AI** action in Settings that runs the
+pass and writes the result on-chain with `updatePrice`. Everyone else never sees it: the write is
+simulated first and comes back `NotOperator`.
 
-## ⚡ Provider Compute Agent
+API keys stay server-side. `vite-ai-proxy.ts` exposes `POST /api/ai`, reads `GEMINI_API_KEY` /
+`OPENAI_API_KEY` from `process.env` (no `VITE_` prefix, so Vite never bundles them), and enforces a
+model allowlist, a prompt length cap and a per-client rate limit. It runs under `vite dev` **and**
+`vite preview`. A static build served from a CDN has no `/api/ai` route and the app falls back to the
+heuristic pricer — mount `handleAiRequest` in a serverless function to run AI pricing in a real
+deployment.
 
-Express server that runs on provider's machine and executes consumer code.
+## Quick start
 
-### Endpoints
-| Method | Path | Description |
-|---|---|---|
-| GET | `/health` | Agent status |
-| GET | `/info` | Provider node info + capabilities |
-| GET | `/jobs` | List provider's on-chain jobs |
-| POST | `/jobs/:id/accept` | Accept pending job on-chain |
-| POST | `/jobs/:id/complete` | Complete job on-chain (settle revenue) |
-| POST | `/execute` | Execute code (consumer → provider) |
-| GET | `/sessions/:jobId` | Execution history for job |
+Requires Node.js 20.19+ and a wallet with testnet DGRAM.
 
-### Supported Runtimes
-- Python 3
-- Node.js (CommonJS)
-
-### Limits
-- 5 minute max per execution
-- Workspace isolation per execution (auto-cleanup)
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 22+
-- MetaMask or compatible wallet
-- BOT Chain Testnet DGRAM (faucet: https://faucet.botchain.ai)
-
-### 1. Frontend
 ```bash
-cd botchain-hackathon
+git clone https://github.com/mdlog/botchain.git
+cd botchain
 npm install
-npm run dev
+cp .env.example .env          # add GEMINI_API_KEY or OPENAI_API_KEY for AI pricing
+npm run dev                   # http://localhost:3000
 ```
-App runs at `http://localhost:3005`
 
-### 2. Smart Contracts (optional — already deployed)
+Add BOT Chain Testnet to your wallet — the app offers to add it on connect:
+
+| Field        | Value                    |
+| ------------ | ------------------------ |
+| Network name | BOT Chain Testnet        |
+| Chain ID     | 968                      |
+| RPC URL      | `https://rpc.bohr.life`  |
+| Currency     | DGRAM                    |
+| Explorer     | `https://scan.bohr.life` |
+
+### Contracts
+
 ```bash
 cd contracts
 npm install
-
-# Compile
-npx hardhat compile
-
-# Deploy to testnet
-npx hardhat run scripts/deploy.ts --network botchain-testnet
+npm run compile
+npm test                      # 54 tests
+npm run deploy:testnet        # needs DEPLOYER_PRIVATE_KEY in contracts/.env
+npm run seed:demo             # register, activate and attest the deployer's nodes
+npm run sync-abis             # regenerate src/config/abis from the artifacts
 ```
 
-### 3. Provider Agent
+### Provider agent
+
+One command on a Linux box with a GPU (or without — CPU-only nodes are supported):
+
 ```bash
-cd compute-agent
-npm install
-
-# Set env (optional — works without wallet for code execution only)
-export PROVIDER_PRIVATE_KEY=0x...  # provider wallet key
-export AGENT_PORT=3006
-export RPC_URL=https://rpc.bohr.life
-export CHAIN_ID=968
-
-node server.js
-```
-Agent runs at `http://localhost:3006`
-
-### 4. Add BOT Chain Testnet to MetaMask
-| Field | Value |
-|---|---|
-| Network Name | BOT Chain Testnet |
-| Chain ID | 968 |
-| RPC URL | `https://rpc.bohr.life` |
-| Currency Symbol | `DGRAM` |
-| Explorer | `https://scan.bohr.life` |
-
-## 🌐 Network Configuration
-
-### BOT Chain Testnet (Development)
-| Parameter | Value |
-|---|---|
-| Chain ID | 968 |
-| RPC | `https://rpc.bohr.life` |
-| Native Token | DGRAM |
-| Explorer | `https://scan.bohr.life` |
-| Faucet | `https://faucet.botchain.ai` |
-
-### BOT Chain Mainnet (Production)
-| Parameter | Value |
-|---|---|
-| Chain ID | 677 |
-| RPC | `https://rpc.botchain.ai` |
-| Native Token | BOT |
-| Gas | 20 gwei |
-
-## 📁 Project Structure
-
-```
-botchain-hackathon/
-├── contracts/                  # Hardhat + Solidity
-│   ├── contracts/
-│   │   ├── ComputeRegistry.sol
-│   │   ├── PriceOracle.sol
-│   │   ├── ComputeMarketplace.sol
-│   │   └── ComputeIndexToken.sol
-│   ├── scripts/
-│   │   ├── deploy.ts
-│   │   ├── check-all-nodes.ts
-│   │   ├── check-cif.ts
-│   │   ├── check-job.ts
-│   │   └── seed-rtx3060.ts
-│   ├── deployments.json
-│   └── hardhat.config.ts
-│
-├── compute-agent/              # Provider compute agent
-│   ├── server.js
-│   └── package.json
-│
-├── src/                        # Frontend
-│   ├── components/
-│   │   ├── Layout.tsx
-│   │   ├── WalletConnect.tsx
-│   │   └── views/
-│   │       ├── Dashboard.tsx
-│   │       ├── Marketplace.tsx
-│   │       ├── ComputeSession.tsx
-│   │       ├── NodeManagement.tsx
-│   │       └── FinancialLayer.tsx
-│   ├── hooks/
-│   │   ├── useWallet.ts
-│   │   ├── useComputeRegistry.ts
-│   │   ├── usePriceOracle.ts
-│   │   ├── useComputeMarketplace.ts
-│   │   ├── useComputeIndexToken.ts
-│   │   └── useComputeSession.ts
-│   ├── context/
-│   │   └── WalletContext.tsx
-│   ├── lib/
-│   │   ├── pricing.ts          # AI pricing engine
-│   │   ├── hardware-detect.ts  # Browser hardware detection
-│   │   ├── format.ts           # Formatting utilities
-│   │   └── utils.ts
-│   ├── config/
-│   │   ├── chain.ts
-│   │   ├── contracts.ts
-│   │   └── *.abi.json
-│   └── types/
-│       └── ethereum.d.ts
-│
-├── vite.config.ts
-├── tsconfig.json
-└── package.json
+curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | bash
 ```
 
-## 🧪 Demo Flow (End-to-End)
+It checks every precondition — tools, architecture, disk, download reachability, RPC liveness —
+**before** it asks for a key or spends gas, then installs Node, Docker and bubblewrap, builds the
+agent, registers and activates the node, installs the boot units, and opens a Cloudflare tunnel whose
+URL it publishes to `AgentRegistry`. See [docs/PROVIDER-SETUP.md](docs/PROVIDER-SETUP.md) for the
+manual path and for what the script asks permission to do.
 
-1. **Connect Wallet** — Click connect, switch to BOT Chain Testnet
-2. **Register Node** — Go to Node Management → Auto-Detect Hardware → Register
-3. **Verify Node** — Owner verifies node (or pre-verified)
-4. **Lease Compute** — Go to Marketplace → Select node → Lease (1 hour, 0.15 DGRAM)
-5. **Accept Job** — Provider accepts in Node Management → Job Queue
-6. **Run Code** — Go to Compute Session → Select job → Write code → Run
-7. **Countdown** — Timer counts down from lease duration
-8. **Auto-Complete** — On expiry, job auto-completes on-chain
-9. **Tokenize Revenue** — Go to Financial Layer → Deposit DGRAM → Mint CIF
-10. **Trade CIF** — CIF tokens tradeable on BDEX
+Your node then waits for the registry verifier to attest it. That is deliberate: a node that can
+vouch for itself makes the "verified" badge worthless, which is the whole basis of the RWA claim.
 
-## 🏆 BOT Chain Builder Challenge #2
+## Provider agent API
 
-- **Track:** RWA (Real World Asset)
-- **Prize:** Up to $5,000 USDT
-- **Timeline:** Aug 10–20, 2026
-- **Compliance:** Asset authenticity (hardware fingerprint), complete business loop (lease→execute→settle→tokenize), AI as core capability (pricing engine)
+Every mutating route requires an EIP-191 challenge signed by the party the chain says is entitled to
+it, valid for 60 seconds. The scope and job id are inside the signed string, so a signature for one
+route or one lease cannot be replayed on another.
 
-## 🗺️ Roadmap
+| Method | Path                     | Auth                                                      |
+| ------ | ------------------------ | --------------------------------------------------------- |
+| `GET`  | `/health`                | —                                                         |
+| `GET`  | `/info`                  | —                                                         |
+| `GET`  | `/jobs`                  | —                                                         |
+| `POST` | `/execute`               | `botchain-execute:{jobId}:{ts}` signed by `job.consumer`  |
+| `GET`  | `/terminal/{jobId}` (WS) | `botchain-terminal:{jobId}:{ts}` signed by `job.consumer` |
+| `POST` | `/jobs/{id}/accept`      | `botchain-accept:{jobId}:{ts}` signed by `job.provider`   |
+| `POST` | `/jobs/{id}/complete`    | `botchain-complete:{jobId}:{ts}` signed by `job.consumer` |
 
-### v1 — CIF Index Fund (Current)
-Single ERC20 token representing fractional ownership of **all** compute revenue on the platform (S&P 500-style index fund for GPU compute).
+Isolation: `/execute` runs under `bubblewrap` with `--unshare-all` (no network), a scrubbed
+environment and a per-execution workspace. `/terminal` runs a Docker container with all capabilities
+dropped, a read-only root filesystem, `no-new-privileges`, and pid/memory/CPU limits. CORS is an
+explicit allowlist (`AGENT_ALLOWED_ORIGINS`), and concurrent executions are bounded by a semaphore
+sized to the CPU count.
 
-- ✅ Single `ComputeIndexToken` contract
-- ✅ Deposit revenue → mint CIF 1:1
-- ✅ Burn CIF → withdraw proportional TVL share
-- ✅ Tradeable on BDEX
-
-### v2 — Per-Provider CIF + Auto-Rebalancing Index (Production)
-Two-layer token architecture for granular risk management and price discovery:
+## Repository layout
 
 ```
-Layer 1: Per-Provider CIF Tokens (granular)
-──────────────────────────────────────────
-CIF-Node#1 (RTX 3060×4)  → backed by Node #1 revenue
-CIF-Node#2 (H100)        → backed by Node #2 revenue
-CIF-Node#3 (RTX 3090)    → backed by Node #3 revenue
-
-Layer 2: CIF Index Token (aggregated)
-──────────────────────────────────────────
-CIF-INDEX = auto-basket of all per-provider tokens
-  ├─ weighted by per-node TVL
-  ├─ auto-rebalanced on each deposit
-  └─ NAV = sum(per-provider NAV × weight)
+botchain/
+├── contracts/              Hardhat + Solidity 0.8.24, OpenZeppelin
+│   ├── contracts/          5 contracts + shared interfaces + a test mock
+│   ├── test/               54 tests across all five contracts
+│   └── scripts/            deploy · seed:demo · sync-abis · fund
+├── compute-agent-rs/       Provider agent (Rust, axum, alloy, bollard)
+│   └── src/                main · auth · chain · gpu · monitor · sandbox · terminal
+├── cli/                    Provider CLI — register, activate, status, tunnel
+├── src/                    Frontend
+│   ├── components/         ui/ design system · views/ · layout/ · terminal/
+│   ├── config/             chain.ts, providers.ts, abis/ (generated)
+│   ├── hooks/              one hook per contract + wallet, session, terminal
+│   └── lib/                tx (simulate→send→receipt), domain, pricing, agentApi
+├── docs/PROVIDER-SETUP.md
+└── setup.sh                One-command provider installer
 ```
 
-**New contracts:**
-- `ComputeIndexTokenFactory` — deploys per-provider CIF tokens, manages index composition
-- `CIFNodeToken` (per-provider) — deposit/withdraw tied to specific node revenue
-- `CIFIndexToken` (v2 upgrade) — auto-rebalancing basket of all `CIFNodeToken` contracts
+## Development
 
-**Benefits:**
-- **Price discovery per GPU type** — H100 CIF trades at premium vs RTX 3060 CIF
-- **Risk isolation** — one node going offline doesn't tank the entire pool
-- **Investor choice** — pick specific providers or buy the index for diversification
-- **Provider reputation** — high-performing providers earn premium pricing on their CIF tokens
-- **Automated rebalancing** — index weights adjust based on revenue performance
+```bash
+npm run dev          # Vite dev server on :3000, AI proxy mounted
+npm run typecheck    # tsc --noEmit, strict
+npm run lint         # ESLint 9 flat config, typed rules
+npm run format       # Prettier
+npm test             # Vitest — formatting, domain, pricing, error mapping
+npm run build        # typecheck, then production build
+npm run preview      # serve the build WITH the AI proxy
+```
 
-### v3 — BDEX Integration + Secondary Market
-- Native liquidity pools on BDEX for per-provider CIF tokens
-- Automated market maker (AMM) for CIF-INDEX ↔ DGRAM
-- Revenue streaming — providers deposit continuously, CIF minted in real-time
-- On-chain risk scoring per node (uptime, job completion rate, revenue consistency)
+CI runs the frontend gate, the contract test suite, `cargo fmt --check` + `cargo clippy -D warnings`
 
-## 📜 License
+- `cargo build --release`, and `shellcheck setup.sh` on every push and pull request.
 
-MIT
+## Known limitations
+
+Stated plainly, because a submission that hides these is worse than one that names them.
+
+- **Testnet only.** No mainnet deployment. `src/config/chain.ts` defines both chains but only chain
+  968 has contracts.
+- **Node specs are self-declared.** `registerNode` accepts whatever hardware a provider claims; there
+  is no stake, proof or slashing. Attestation by the registry verifier is the only gate, and it is a
+  single trusted address. Hardware-fingerprint attestation is the obvious next step — the agent
+  already collects real GPU data.
+- **The oracle is one operator.** `PriceOracle` has a floor, a ceiling, a confidence field and
+  staleness rejection at the marketplace, but the writer is a single EOA rather than a committee.
+- **Provider egress is not filtered.** The terminal container is well-confined against the host but
+  sits on the default Docker bridge, so a lease holder can reach the provider's LAN. Run the agent on
+  a dedicated box or a VPS.
+- **The AI proxy is a dev/preview server route.** Deploying the static build without a serverless
+  function means heuristic pricing only.
+- **No upgrade path.** The contracts are not proxied; fixing one means redeploying and updating the
+  addresses in `contracts/deployments.json` and `src/config/chain.ts`.
+
+## Roadmap
+
+**v1 (current)** — one CIF token indexing all compute revenue on the platform: attested nodes,
+escrowed leases, proportional settlement, revenue-capped minting, index-priced redemption.
+
+**v2 — per-provider CIF + rebalancing index.** A `CIFNodeToken` per provider backed by that node's
+revenue, and a `CIFIndexToken` holding an auto-rebalanced basket of them. Gives price discovery per
+GPU tier, isolates one node going offline from the whole pool, and lets holders pick a provider or
+buy the index.
+
+**v3 — secondary market.** BDEX liquidity for per-provider CIF, an AMM for CIF-INDEX ↔ DGRAM,
+streaming revenue deposits, and on-chain risk scoring per node from uptime and completion history.
+
+## License
+
+[MIT](LICENSE)

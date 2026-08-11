@@ -1,293 +1,197 @@
-# ComputeRWA Provider Setup Guide
+# BotCompute provider setup
 
-Panduan lengkap setup compute node di BOT Chain DePIN — dari install hingga handle cloudflared restart.
+How to put a machine on the BOT Chain DePIN network and keep it there — install, attestation, and
+surviving a tunnel restart.
+
+The network is deployed on **BOT Chain Testnet (chain 968)** only. Get gas from the
+[faucet](https://faucet.botchain.ai/basic).
 
 ---
 
-## Quick Start (One Command)
+## One command
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | bash
 ```
 
-Script ini melakukan 7 step otomatis:
-1. Konfigurasi + simpan private key ke `.env` (chmod 600)
-2. Install Node.js v22 (jika belum ada)
-3. Download CLI + dependencies
-4. Detect hardware → register → activate → verify node on-chain
-5. Install Rust toolchain
-6. Build Rust compute agent (~12MB binary)
-7. Install cloudflared → start tunnel → register agent URL on-chain
+The script runs every check that can fail — required tools, CPU architecture, free disk, whether the
+downloads are reachable, whether the RPC answers — **before** it asks for your private key or spends
+any gas. It then asks for consent in plain terms, because three of the things it does deserve it:
 
----
+- it adds your user to the `docker` group, which is root-equivalent on this machine;
+- it installs a compute agent binary that is not code-signed;
+- it sends three on-chain transactions from the key you provide (register, activate, publish endpoint).
+
+After that it installs Node, Docker, bubblewrap and cloudflared, builds the agent from source,
+registers and activates your node, installs boot units for both the agent and the tunnel, and
+publishes the tunnel URL to `AgentRegistry`.
+
+Override any default with an environment variable, e.g. `AGENT_PORT=4006 ... | bash`.
 
 ## Prerequisites
 
-| Requirement | Keterangan |
-|---|---|
-| OS | Linux (Ubuntu/Debian) atau macOS. WSL2 juga didukung. |
-| Node.js | v18+ (auto-installed by setup.sh) |
-| Rust | v1.70+ (auto-installed by setup.sh) |
-| cloudflared | Auto-installed by setup.sh |
-| GPU | Optional. NVIDIA (nvidia-smi) atau AMD (rocm-smi). CPU-only didukung (vramGB=1). |
-| Private Key | Wallet BOT Chain testnet dengan DGRAM balance untuk gas |
-| Port 3006 | Available untuk compute agent |
+| Requirement | Notes                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OS          | Linux (Ubuntu/Debian) or macOS. WSL2 works.                                                                                                            |
+| Node.js     | 18+, auto-installed                                                                                                                                    |
+| Rust        | 1.87+, auto-installed (edition 2024)                                                                                                                   |
+| Docker      | Auto-installed on Linux. Needed for the **interactive terminal** only — `/execute` works without it.                                                   |
+| bubblewrap  | Auto-installed on Linux. **Required** — `/execute` returns 503 without it. Not available on macOS; use a Linux VM if you want to serve code execution. |
+| cloudflared | Auto-installed                                                                                                                                         |
+| GPU         | Optional. NVIDIA (`nvidia-smi`) or AMD (`rocm-smi`). CPU-only nodes are supported and register with 0 VRAM.                                            |
+| Wallet      | A BOT Chain Testnet key with DGRAM for gas                                                                                                             |
+| Port 3006   | Free on localhost; cloudflared is what exposes it                                                                                                      |
 
----
+> **Fresh Docker installs:** group membership is not active in the shell that installed it. The
+> script wraps the agent launch in `sg docker` so it works immediately; log out and back in once
+> afterwards so your normal shell gets Docker access without `sudo`.
 
-## Manual Step-by-Step Setup
+## Attestation — read this before you wait
 
-### 1. Install Directory
+`setup.sh` registers and activates your node. It does **not** verify it, and it cannot:
+`ComputeRegistry.verifyNode` is restricted to the registry's `verifier` address. A node that could
+attest itself would make the "verified" badge meaningless, and that badge is the gate on both leasing
+and CIF minting — it is the basis of the whole RWA claim.
+
+So your node comes up **Active, awaiting attestation**. Send your node id to whoever holds the
+verifier key; they run:
+
+```bash
+node cli.js verify <node-id>
+```
+
+Running it yourself simulates first and tells you it was rejected, without sending a transaction or
+spending gas. Check who the verifier is with `node cli.js status`.
+
+## Manual setup
+
+### 1. Install directory and CLI
 
 ```bash
 mkdir -p ~/.computerwa && cd ~/.computerwa
-```
-
-### 2. Download CLI
-
-```bash
 curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/cli/cli.js -o cli.js
 curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/cli/package.json -o package.json
 npm install
 ```
 
-### 3. Buat `.env`
+### 2. Configure
 
 ```bash
 cat > .env << 'EOF'
-PROVIDER_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+PROVIDER_PRIVATE_KEY=0x...
 RPC_URL=https://rpc.bohr.life
 CHAIN_ID=968
-REGISTRY_ADDR=0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5
-MARKETPLACE_ADDR=0x89b6fBFB647B8a07c4d1520871440f0B01314f87
-ORACLE_ADDR=0x2BF8219f6b296A85904e4A486963496c3A0d1b43
-AGENT_REGISTRY_ADDR=0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4
 AGENT_PORT=3006
+
+REGISTRY_ADDR=0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396
+MARKETPLACE_ADDR=0xB72A69BeFFcd478e2ae19C20b65b1cAC1DC5d848
+ORACLE_ADDR=0x1087701623e187D00cF05A77DFA08F2710FB66Aa
+AGENT_REGISTRY_ADDR=0xBF0Fb1508B9E9A6FF13FE74991aA54789D31cAE7
 EOF
 chmod 600 .env
 ```
 
-**⚠️ Jangan commit `.env` ke repo. Pastikan ada di `.gitignore`.**
+Addresses change on every redeploy — the authoritative copy is
+[`contracts/deployments.json`](../contracts/deployments.json).
 
-### 4. Register Node (detect → register → activate → verify)
-
-```bash
-node cli.js setup
-```
-
-Output contoh:
-```
-━━━ Step 1/4: Hardware Detection ━━━
-✅ GPU: RTX 3060 (12GB)
-✅ CPU: AMD Ryzen 9 5950X (32 cores)
-✅ RAM: 78.5 GB
-✅ TFLOPS: 12.96
-
-━━━ Step 2/4: Register Node ━━━
-✅ Node registered! node-id:13976493914421792007
-
-━━━ Step 3/4: Activate Node ━━━
-✅ Node activated!
-
-━━━ Step 4/4: Verify Node ━━━
-✅ Node verified!
-```
-
-### 5. Build Compute Agent (Rust)
+### 3. Register the node
 
 ```bash
-# Install Rust jika belum
+node cli.js setup     # detect → register → activate
+```
+
+### 4. Build the agent
+
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source ~/.cargo/env
+source "$HOME/.cargo/env"
 
-# Download source
 mkdir -p compute-agent-rs/src
-REPO=https://raw.githubusercontent.com/mdlog/botchain/main
-curl -fsSL $REPO/compute-agent-rs/Cargo.toml -o compute-agent-rs/Cargo.toml
-curl -fsSL $REPO/compute-agent-rs/src/main.rs -o compute-agent-rs/src/main.rs
-curl -fsSL $REPO/compute-agent-rs/src/chain.rs -o compute-agent-rs/src/chain.rs
-curl -fsSL $REPO/compute-agent-rs/src/sandbox.rs -o compute-agent-rs/src/sandbox.rs
-curl -fsSL $REPO/compute-agent-rs/src/monitor.rs -o compute-agent-rs/src/monitor.rs
-curl -fsSL $REPO/compute-agent-rs/src/gpu.rs -o compute-agent-rs/src/gpu.rs
+REPO=https://raw.githubusercontent.com/mdlog/botchain/main/compute-agent-rs
+for f in Cargo.toml Cargo.lock Dockerfile.terminal; do curl -fsSL "$REPO/$f" -o "compute-agent-rs/$f"; done
+for f in main auth chain gpu monitor sandbox terminal; do curl -fsSL "$REPO/src/$f.rs" -o "compute-agent-rs/src/$f.rs"; done
+
+cd compute-agent-rs && cargo build --release && cd ..
 cp .env compute-agent-rs/.env && chmod 600 compute-agent-rs/.env
-
-# Build
-cd compute-agent-rs && cargo build --release
 ```
 
-Binary: `target/release/computerwa-agent` (~12MB)
-
-### 6. Install Cloudflared
+Also set the origin the dashboard is served from, or browser requests will be blocked by CORS:
 
 ```bash
-# Linux — via Cloudflare deb repo (recommended)
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt-get update && sudo apt-get install -y cloudflared
-
-# Atau direct binary download (fallback)
-curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-sudo chmod +x /usr/local/bin/cloudflared
-
-# macOS
-brew install cloudflared
+echo 'AGENT_ALLOWED_ORIGINS=http://localhost:3000' >> compute-agent-rs/.env
 ```
 
-Verifikasi:
-```bash
-cloudflared --version
-```
-
-### 7. Start Compute Agent + Tunnel
+### 5. Build the terminal image (optional, needs Docker)
 
 ```bash
-cd ~/.computerwa
-
-# Start compute agent di background
 cd compute-agent-rs
-nohup ./target/release/computerwa-agent > agent.log 2>&1 &
-cd ~/.computerwa
-
-# Verify agent running
-curl http://localhost:3006/health
-# Output: {"status":"ok"}
-
-# Start cloudflared tunnel + auto-register URL on-chain
-node cli.js tunnel --port 3006
+docker build -f Dockerfile.terminal -t botcompute-terminal:latest .
+docker images | grep botcompute-terminal
 ```
 
-CLI `tunnel` akan:
-1. Spawn `cloudflared tunnel --url http://localhost:3006`
-2. Capture URL dari stderr (contoh: `https://abc-def-ghi.trycloudflare.com`)
-3. Call `setAgentUrl(url)` di AgentRegistry contract — tx on-chain
-4. Frontend langsung baca URL baru dari chain → agent discoverable
+Without it, `/execute` still works and the terminal closes with code `4011`.
 
----
-
-## CLI Commands Reference
+### 6. Start the agent and the tunnel
 
 ```bash
 cd ~/.computerwa
+nohup ./compute-agent-rs/target/release/computerwa-agent > agent.log 2>&1 &
+curl -s localhost:3006/health     # {"status":"ok", ..., "sandbox":true, "docker":true}
 
-# Setup & Registration
-node cli.js setup                    # detect → register → activate → verify
-node cli.js detect                   # hardware detection only
-node cli.js register                 # register node on-chain
-node cli.js activate <node-id>       # activate node
-node cli.js verify <node-id>         # verify node
-node cli.js deactivate <node-id>     # deactivate node
-
-# Tunnel & Agent URL
-node cli.js tunnel --port 3006       # start cloudflared + register URL on-chain
-node cli.js set-agent-url <url>      # manually set agent URL on-chain
-
-# Monitoring
-node cli.js list                     # all nodes on network
-node cli.js mine                     # your nodes
-node cli.js info <node-id>           # node details
-node cli.js heartbeat <node-id>      # send heartbeat
-node cli.js balance                  # revenue + wallet balance
-node cli.js status                   # network + contract status
+node cli.js tunnel --port 3006    # opens the tunnel and publishes the URL on-chain
 ```
 
----
+`sandbox: false` means bubblewrap is missing and the node cannot execute code, even though it will
+still show as Active. `docker: false` means no interactive terminal.
 
-## Cloudflared Restart — Update Agent URL
+## CLI reference
 
-### Kenapa URL Berubah?
+```bash
+node cli.js setup                 # detect → register → activate
+node cli.js detect                # hardware detection only
+node cli.js register              # register a node on-chain
+node cli.js activate <node-id>    # make it leasable
+node cli.js deactivate <node-id>  # take it out of the marketplace
+node cli.js verify <node-id>      # attest a node — VERIFIER KEY ONLY
 
-URL `*.trycloudflare.com` bersifat **ephemeral** — Cloudflare generate URL acak setiap kali cloudflared start. Jika cloudflared crash, restart, atau koneksi terputus, URL lama tidak valid dan frontend tidak bisa connect ke agent Anda.
+node cli.js tunnel --port 3006    # start cloudflared and publish the URL
+node cli.js set-agent-url <url>   # publish an endpoint manually
 
-### Cara 1: Auto via CLI tunnel (recommended)
+node cli.js list                  # every node on the network
+node cli.js mine                  # your nodes
+node cli.js info <node-id>        # one node in detail
+node cli.js heartbeat <node-id>   # liveness ping
+node cli.js balance               # revenue and wallet balance
+node cli.js status                # network, contracts, verifier
+```
+
+## Tunnel restarts change your URL
+
+A Cloudflare quick tunnel gets a **new hostname every start**, so the URL published on-chain goes
+stale whenever cloudflared restarts. `setup.sh` installs a `botcompute-tunnel` unit that re-runs
+`set-agent-url` on boot; if you are running by hand:
 
 ```bash
 cd ~/.computerwa
-
-# Kill cloudflared lama
-pkill -f "cloudflared tunnel" 2>/dev/null
-sleep 2
-
-# Jalankan ulang — capture URL baru + auto-register on-chain
-node cli.js tunnel --port 3006
+pkill -f "cloudflared tunnel"
+node cli.js tunnel --port 3006      # captures the new URL and writes it on-chain
 ```
 
-CLI otomatis: start tunnel baru → capture URL → `setAgentUrl(newUrl)` on-chain → selesai.
-
-### Cara 2: Manual set-agent-url
-
-Jika cloudflared sudah running dan Anda tahu URL barunya:
+Or publish it explicitly:
 
 ```bash
-cd ~/.computerwa
-node cli.js set-agent-url https://new-url-here.trycloudflare.com
+node cli.js set-agent-url https://new-url.trycloudflare.com
 ```
 
-### Cara 3: Script auto-recovery
+### Named tunnel — a stable URL
 
-Buat `~/.computerwa/restart-tunnel.sh`:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-cd ~/.computerwa
-
-echo "🔄 Restarting cloudflared tunnel..."
-
-# Kill existing cloudflared
-pkill -f "cloudflared tunnel" 2>/dev/null || true
-sleep 2
-
-# Ensure compute agent is running
-if ! curl -sf http://localhost:3006/health >/dev/null 2>&1; then
-  echo "⚠️  Compute agent not running. Starting..."
-  cd compute-agent-rs
-  nohup ./target/release/computerwa-agent > agent.log 2>&1 &
-  cd ~/.computerwa
-  sleep 3
-fi
-
-# Start new tunnel + register URL on-chain
-node cli.js tunnel --port 3006
-```
+For anything long-lived, use a named tunnel and set the URL once:
 
 ```bash
-chmod +x ~/.computerwa/restart-tunnel.sh
-```
-
-Jalankan setiap kali tunnel bermasalah:
-```bash
-~/.computerwa/restart-tunnel.sh
-```
-
-### Cara 4: Cron auto-check (opsional)
-
-Cek setiap 5 menit apakah tunnel masih hidup, restart jika perlu:
-
-```bash
-# Tambahkan ke crontab
-crontab -e
-
-# Tambahkan baris ini:
-*/5 * * * * ~/.computerwa/restart-tunnel.sh >> ~/.computerwa/tunnel-cron.log 2>&1
-```
-
-Atau pakai systemd timer yang lebih robust.
-
-### Cara 5: Named Tunnel (production — URL stabil)
-
-Untuk produksi, pakai Cloudflare Named Tunnel agar URL tidak berubah saat restart:
-
-```bash
-# Login ke Cloudflare (sekali saja)
 cloudflared tunnel login
-
-# Create named tunnel
 cloudflared tunnel create computerwa
-
-# Configure DNS route
 cloudflared tunnel route dns computerwa agent.yourdomain.com
 
-# Run dengan config file
 cat > ~/.cloudflared/config.yml << 'EOF'
 tunnel: computerwa
 credentials-file: ~/.cloudflared/<TUNNEL_ID>.json
@@ -297,188 +201,79 @@ ingress:
   - service: http_status:404
 EOF
 
-# Start
 cloudflared tunnel run computerwa
+node cli.js set-agent-url https://agent.yourdomain.com
 ```
 
-Dengan named tunnel, URL = `https://agent.yourdomain.com` — stabil, tidak berubah saat restart. Cukup `set-agent-url` sekali saja.
+`AgentRegistry` requires an `https://` URL between 8 and 256 characters and rejects anything else
+on-chain.
 
----
-
-## Verifikasi Agent URL On-Chain
-
-Cek URL yang terdaftar untuk wallet Anda:
+## Managing the service
 
 ```bash
-cd ~/.computerwa
-node cli.js status
+sudo systemctl status botcompute-agent
+sudo systemctl status botcompute-tunnel
+journalctl -u botcompute-agent -f
+tail -f ~/.computerwa/agent.log
 ```
-
-Atau query langsung dari contract:
-
-```bash
-cd ~/.computerwa
-node -e "
-import 'dotenv/config';
-import { createPublicClient, http, parseAbiItem } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-const pk = process.env.PROVIDER_PRIVATE_KEY;
-const account = privateKeyToAccount(pk);
-const pc = createPublicClient({ chain: { id: 968, name:'testnet', nativeCurrency:{name:'DGRAM',symbol:'DGRAM',decimals:18}, rpcUrls:{default:{http:['https://rpc.bohr.life']}}}, transport: http() });
-const abi = [parseAbiItem('function getAgentUrl(address) view returns (string)')];
-const url = await pc.readContract({ address: '0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4', abi, functionName: 'getAgentUrl', args: [account.address] });
-console.log('Provider:', account.address);
-console.log('Agent URL:', url || '(not registered)');
-"
-```
-
----
-
-## Contract Addresses (v5 — Testnet)
-
-| Contract | Address | Fungsi |
-|---|---|---|
-| ComputeRegistry | `0x8b68ae929A0Cbe32F6F0121881B42Ef9D9213eB5` | Node registration, activation, verification |
-| PriceOracle | `0x2BF8219f6b296A85904e4A486963496c3A0d1b43` | GPU pricing reference |
-| ComputeMarketplace | `0x89b6fBFB647B8a07c4d1520871440f0B01314f87` | Job creation, leasing, completion |
-| ComputeIndexToken | `0x11D29Bf60E75f3A3Dc3b46fC7dfaafc5BdB6825E` | Payment token |
-| AgentRegistry | `0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4` | Provider → agent URL mapping |
-
-**Networks:**
-- Testnet: `https://rpc.bohr.life` (chainId 968, DGRAM)
-- Mainnet: `https://rpc.botchain.ai` (chainId 677, BOT)
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                 Frontend (Web DApp)                       │
-│   Marketplace │ Dashboard │ ComputeSession │ NodeManagement│
-└───────┬──────────────────────────────────────────────────┘
-        │
-        │ 1. Read agent URL from AgentRegistry contract
-        │ 2. POST /execute to provider agent URL
-        │
-        ▼
-┌───────────────────────┐    ┌────────────────────────────┐
-│  AgentRegistry.sol    │    │  Cloudflare Tunnel         │
-│  (on-chain)           │    │  *.trycloudflare.com       │
-│  address → agentUrl   │    │  (ephemeral, changes on    │
-│                       │    │   restart)                 │
-└───────────────────────┘    └──────────┬─────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────┐
-│             Compute Agent (Rust binary)                   │
-│   axum HTTP server on 0.0.0.0:3006                       │
-│   /health │ /info │ /jobs │ /execute                     │
-│   Heartbeat → ComputeRegistry (every 5 min)              │
-└──────────────────────────────────────────────────────────┘
-```
-
-**Flow:**
-1. Provider runs `setup.sh` → node registered + agent running + tunnel active
-2. Cloudflared memberi public HTTPS URL → registered ke AgentRegistry contract
-3. Consumer lease compute di Marketplace → dapat jobId
-4. Frontend baca `getAgentUrl(provider)` dari AgentRegistry → route ke agent
-5. Consumer execute code via `/execute` endpoint
-6. Agent run sandboxed code → return result
-7. Job complete on-chain → payment settled
-
----
 
 ## Troubleshooting
 
-### `Unknown: tunnel`
-CLI versi lama. Update:
-```bash
-cd ~/.computerwa
-curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/cli/cli.js -o cli.js
-curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/cli/package.json -o package.json
-npm install
-```
+**`/execute` returns 503, `"sandbox": false` in `/health`** — bubblewrap is not installed.
+`sudo apt-get install -y bubblewrap` (or `dnf install bubblewrap`).
 
-### `cloudflared: command not found`
-```bash
-curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-sudo chmod +x /usr/local/bin/cloudflared
-```
+**Terminal closes immediately with code 4010** — the agent cannot reach the Docker socket. Check
+`docker ps` works for your user, and that you logged out and back in after the install.
 
-### Tunnel URL tidak muncul setelah 30 detik
-Pastikan agent running dan port 3006 accessible:
-```bash
-curl http://localhost:3006/health
-# Should return: {"status":"ok"}
-```
+**Terminal closes with 4001** — the signature did not match. Your wallet is not the lease's consumer,
+or your clock is off by more than 60 seconds. Check with `timedatectl`.
 
-Cek firewall:
-```bash
-sudo ufw status
-# Pastikan port 3006 tidak diblokir (local only, cloudflared yang expose ke public)
-```
+**`/execute` or `/jobs/{id}/complete` returns 400 or 401** — these routes require a signed challenge
+now. Use the dashboard rather than raw `curl`; an unauthenticated call is supposed to fail.
 
-### `setAgentUrl` tx failed
-- Pastikan wallet punya DGRAM untuk gas
-- Pastikan `.env` berisi `AGENT_REGISTRY_ADDR=0x176bE2A9c2917494E77E4D072c03Dc8E40Dd81c4`
-- Pastikan private key di `.env` match dengan wallet yang ingin di-register
+**Browser requests blocked by CORS** — set `AGENT_ALLOWED_ORIGINS` in `compute-agent-rs/.env` to the
+origin serving the dashboard. The default allows only `http://localhost:3000`.
 
-### Compute agent tidak running
-```bash
-cd ~/.computerwa/compute-agent-rs
-./target/release/computerwa-agent
-# Check logs
-cat agent.log
-# Verify
-curl http://localhost:3006/health
-```
-
-### Frontend "No agent URL registered"
-Provider belum daftar URL di AgentRegistry. Jalankan:
-```bash
-node cli.js tunnel --port 3006
-# atau
-node cli.js set-agent-url https://your-url.trycloudflare.com
-```
-
----
-
-## Security
-
-- **Private key** disimpan di `.env` dengan `chmod 600`, tidak pernah di-pass sebagai env var atau CLI arg
-- Setup.sh baca key via `/dev/tty` (silent read), unset setelah simpan ke `.env`
-- `.env` tidak di-commit ke repo (`.gitignore`)
-- Cloudflared tunnel = HTTPS (TLS encrypted)
-- Code execution di sandbox terisolasi di compute agent
-
----
-
-## Quick Reference
+**`cloudflared: command not found`**
 
 ```bash
-# First time setup (one command)
-curl -fsSL https://raw.githubusercontent.com/mdlog/botchain/main/setup.sh | bash
-
-# After cloudflared restart — update URL on-chain
-cd ~/.computerwa && pkill -f "cloudflared tunnel" && node cli.js tunnel --port 3006
-
-# Manual set agent URL
-node cli.js set-agent-url https://new-url.trycloudflare.com
-
-# Check everything
-node cli.js status      # network + contracts
-node cli.js mine        # your nodes
-node cli.js balance     # revenue
-node cli.js info <id>   # node details
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /tmp/cloudflared && sudo install -m755 /tmp/cloudflared /usr/local/bin/cloudflared
 ```
 
----
+**No tunnel URL after 30 seconds** — check the agent answers `curl localhost:3006/health` first; the
+tunnel has nothing to expose until it does.
 
-## Registered Providers (Current)
+**Frontend says "No agent URL registered"** — publish one with `node cli.js tunnel --port 3006` or
+`node cli.js set-agent-url <url>`.
 
-| Provider | Wallet | Agent URL |
-|---|---|---|
-| Desktop | `0x264F463571473F0b5C1e9E30018D8B23676b7B80` | `https://agent.mdloglabs.org` |
-| Laptop | `0x7cF858145c1449e6eC1798499527632a846CEeDC` | `https://agent2.mdloglabs.org` |
-| MD-Indo (WSL) | `0x3D4D26eA1b193f5509d0dC1df85b290b685fb885` | `*.trycloudflare.com` (ephemeral) |
+**`setAgentUrl` reverted** — the URL must start with `https://` and be 8–256 characters. Also check
+the wallet has gas.
+
+**Node stays "awaiting attestation"** — expected. Only the registry verifier can attest; see
+[Attestation](#attestation--read-this-before-you-wait).
+
+## Contract addresses — testnet (chain 968)
+
+| Contract             | Address                                      |
+| -------------------- | -------------------------------------------- |
+| `ComputeRegistry`    | `0xcBbEa600C8d15E190A1C69676d8b8a5938BFE396` |
+| `PriceOracle`        | `0x1087701623e187D00cF05A77DFA08F2710FB66Aa` |
+| `ComputeMarketplace` | `0xB72A69BeFFcd478e2ae19C20b65b1cAC1DC5d848` |
+| `ComputeIndexToken`  | `0x84137667DE83db275B0e0c1ddb94459b8382Ceea` |
+| `AgentRegistry`      | `0xBF0Fb1508B9E9A6FF13FE74991aA54789D31cAE7` |
+
+## Security notes
+
+- The private key is read from `/dev/tty` with echo off, written to `.env` at mode `600`, and never
+  passed as a command-line argument or exported into the environment.
+- `.env` is gitignored in every package.
+- Every mutating agent route verifies an EIP-191 signature against the on-chain party for that lease,
+  with a 60-second freshness window. The scope and job id are inside the signed string, so a
+  signature cannot be replayed across routes or leases.
+- `/execute` runs under bubblewrap with `--unshare-all` — no network, scrubbed environment, its own
+  workspace per run, and a timeout capped at 300 seconds regardless of what the caller asks for.
+- The terminal container drops all capabilities, runs a read-only root filesystem with
+  `no-new-privileges`, and has pid, memory and CPU limits.
+- **The terminal container is not egress-filtered.** It sits on the default Docker bridge, so a lease
+  holder can reach your LAN and any service on it. Run the agent on a dedicated machine or a VPS.
